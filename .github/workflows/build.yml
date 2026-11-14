@@ -1,14 +1,23 @@
 name: build
 
 # Builds and tests kxgdi on every push and pull request.
-# Pushing a tag like v0.1.0 additionally publishes a GitHub release with the zip.
+#
+# Releases: run this workflow manually (Actions -> build -> Run workflow) with a
+# version such as v0.1.0. It creates a *draft* pre-release with the zip and
+# checksums, using the matching section of CHANGELOG.md as release notes.
+# Drafts are only visible to the repository owner; the tag is created when the
+# draft is published on GitHub.
 
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version for a draft release (e.g. v0.1.0). Leave empty to only build.'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -39,23 +48,38 @@ jobs:
             out/x64/*.pdb
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'workflow_dispatch' && inputs.version != ''
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+
       - uses: actions/download-artifact@v8
         with:
           name: kxgdi-win7-x64
 
-      - name: Create release
+      - name: Create draft pre-release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "Invalid version '$VERSION' (expected e.g. v0.1.0)"; exit 1
+          fi
+
+          # Release notes: the "## <version>" section of CHANGELOG.md.
+          awk -v v="## $VERSION" '$0 == v { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "No section '## $VERSION' in CHANGELOG.md"; exit 1
+          fi
+          printf '\n---\nBuilt by GitHub Actions from commit %s.\n' "$GITHUB_SHA" >> notes.md
+
+          gh release create "$VERSION" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "kxgdi $GITHUB_REF_NAME" \
-            --prerelease \
-            --notes "Experimental build. Not yet confirmed on Windows 7 - please run kxgdi-test.exe first and report the result. Built by GitHub Actions from commit $GITHUB_SHA." \
+            --draft --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "kxgdi $VERSION" \
+            --notes-file notes.md \
             dist/kxgdi-win7-x64.zip dist/SHA256SUMS.txt

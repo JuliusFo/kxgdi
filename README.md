@@ -110,7 +110,9 @@ pwsh .\tools\gen-def.ps1 -Gdi32 C:\Windows\System32\gdi32.dll, D:\win7\gdi32.dll
 pwsh .\tools\package.ps1            # dist\kxgdi-win7-x64.zip
 ```
 
-Release builds are made by GitHub Actions from the tagged source (`.github/workflows/build.yml`).
+Release builds are made by GitHub Actions (`.github/workflows/build.yml`): run the workflow manually
+with a version such as `v0.1.0`. It creates a draft pre-release with the zip, checksums and the matching
+section of [CHANGELOG.md](CHANGELOG.md); publishing the draft creates the tag.
 On build servers without a display adapter the test runs with `/ci` and skips the adapter checks.
 
 Adding functions: implement them as `Ext_<Name>` in `src\kxgdi.c`, add them to `$Implemented` in

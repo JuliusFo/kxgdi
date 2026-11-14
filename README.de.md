@@ -105,7 +105,9 @@ pwsh .\tools\gen-def.ps1 -Gdi32 C:\Windows\System32\gdi32.dll, D:\win7\gdi32.dll
 pwsh .\tools\package.ps1            # dist\kxgdi-win7-x64.zip für den Windows-7-PC
 ```
 
-Release-Dateien baut GitHub Actions aus dem getaggten Quellcode (`.github\workflows\build.yml`). Auf
+Release-Dateien baut GitHub Actions (`.github\workflows\build.yml`): Workflow von Hand mit einer Version wie
+`v0.1.0` starten. Er legt einen Release-Entwurf (Vorabversion) mit Zip, Prüfsummen und dem passenden
+Abschnitt aus [CHANGELOG.md](CHANGELOG.md) an. Erst beim Veröffentlichen des Entwurfs entsteht der Tag. Auf
 Build-Servern ohne Grafikadapter läuft der Test mit `/ci` und überspringt die Adapter-Prüfungen.
 
 Weitere Funktionen nachrüsten: In `src\kxgdi.c` als `Ext_<Name>` implementieren, in `tools\gen-def.ps1` in
