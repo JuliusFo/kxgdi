@@ -1,0 +1,16 @@
+;; Import definitions used to create kernel32.lib without the Windows SDK.
+;; Only functions that exist on Windows 7.
+LIBRARY kernel32.dll
+EXPORTS
+    DisableThreadLibraryCalls
+    ExitProcess
+    GetCommandLineW
+    GetProcAddress
+    GetProcessHeap
+    GetStdHandle
+    HeapAlloc
+    HeapFree
+    LoadLibraryW
+    FreeLibrary
+    OutputDebugStringW
+    WriteFile
