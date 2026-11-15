@@ -3,10 +3,15 @@ name: build
 # Builds and tests kxgdi on every push and pull request.
 #
 # Releases: run this workflow manually (Actions -> build -> Run workflow) with a
-# version such as v0.1.0. It creates a *draft* pre-release with the zip and
+# version such as v0.3.0. It creates a *draft* release with the zip and
 # checksums, using the matching section of CHANGELOG.md as release notes.
 # Drafts are only visible to people with write access to the repository; the
 # tag is created when the draft is published on GitHub.
+#
+# By default the draft is a normal release, which becomes "Latest release" on
+# the repository page when published. Tick "pre-release" only for test builds:
+# GitHub does not show pre-releases as the latest release, so most visitors
+# will not find them.
 
 on:
   push:
@@ -15,9 +20,14 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version for a draft release (e.g. v0.1.0). Leave empty to only build.'
+        description: 'Version for a draft release (e.g. v0.3.0). Leave empty to only build.'
         required: false
         default: ''
+      prerelease:
+        description: 'Mark as pre-release (test builds only; not shown as the latest release)'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -60,10 +70,11 @@ jobs:
         with:
           name: kxgdi-win7-x64
 
-      - name: Create draft pre-release
+      - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
         run: |
           if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
             echo "Invalid version '$VERSION' (expected e.g. v0.1.0)"; exit 1
@@ -76,9 +87,12 @@ jobs:
           fi
           printf '\n---\nBuilt by GitHub Actions from commit %s.\n' "$GITHUB_SHA" >> notes.md
 
+          flags=(--draft)
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+
           gh release create "$VERSION" \
             --repo "$GITHUB_REPOSITORY" \
-            --draft --prerelease \
+            "${flags[@]}" \
             --target "$GITHUB_SHA" \
             --title "kxgdi $VERSION" \
             --notes-file notes.md \

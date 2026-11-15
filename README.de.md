@@ -152,8 +152,10 @@ vollständigen `test\Test-Loader.ps1`. Auf Build-Servern ohne Grafikadapter läu
 und überspringt die Adapter-Prüfungen.
 
 Release-Dateien baut GitHub Actions (`.github\workflows\build.yml`): Workflow von Hand mit einer Version wie
-`v0.2.0` starten. Er legt einen Release-Entwurf (Vorabversion) mit Zip, Prüfsummen und dem passenden
-Abschnitt aus [CHANGELOG.md](CHANGELOG.md) an. Erst beim Veröffentlichen des Entwurfs entsteht der Tag.
+`v0.3.0` starten. Er legt einen Release-Entwurf mit Zip, Prüfsummen und dem passenden Abschnitt aus
+[CHANGELOG.md](CHANGELOG.md) an. Erst beim Veröffentlichen des Entwurfs entsteht der Tag, und das Release
+wird zum neuesten („Latest“). Die Option „pre-release“ ist nur für Testversionen gedacht: GitHub zeigt
+Vorabversionen auf der Startseite des Repos nicht als neuestes Release an.
 
 Weitere Funktionen nachrüsten: In `src\kxgdi.c` als `Ext_<Name>` implementieren, in `tools\gen-def.ps1` in
 `$Implemented` eintragen, `build.ps1 -RegenerateDef -Test` ausführen.

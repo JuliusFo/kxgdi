@@ -150,8 +150,10 @@ end-to-end `test\Test-Loader.ps1`. On build servers without a display adapter th
 `/ci` and skips the adapter checks.
 
 Release builds are made by GitHub Actions (`.github/workflows/build.yml`): run the workflow manually
-with a version such as `v0.2.0`. It creates a draft pre-release with the zip, checksums and the matching
-section of [CHANGELOG.md](CHANGELOG.md); publishing the draft creates the tag.
+with a version such as `v0.3.0`. It creates a draft release with the zip, checksums and the matching
+section of [CHANGELOG.md](CHANGELOG.md); publishing the draft creates the tag and makes it the latest
+release. The "pre-release" option is meant for test builds only: GitHub does not show pre-releases as
+the latest release on the repository page.
 
 Adding functions: implement them as `Ext_<Name>` in `src\kxgdi.c`, add them to `$Implemented` in
 `tools\gen-def.ps1`, then run `build.ps1 -RegenerateDef -Test`.
