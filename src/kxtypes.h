@@ -73,6 +73,7 @@ typedef struct _ANSI_STRING {
 #define IMAGE_NT_OPTIONAL_HDR64_MAGIC	0x20B
 
 #define IMAGE_DIRECTORY_ENTRY_IMPORT		1
+#define IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT	11
 #define IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT	13
 
 typedef struct _IMAGE_DOS_HEADER {
@@ -218,6 +219,46 @@ __declspec(dllimport) void NTAPI RtlGetNtVersionNumbers(
 #define ProcessHandleTracing	32
 
 //
+// File I/O without kernel32 (log file).
+//
+
+typedef struct _OBJECT_ATTRIBUTES {
+	ULONG			Length;
+	HANDLE			RootDirectory;
+	UNICODE_STRING	*ObjectName;
+	ULONG			Attributes;
+	PVOID			SecurityDescriptor;
+	PVOID			SecurityQualityOfService;
+} OBJECT_ATTRIBUTES;
+
+typedef struct _IO_STATUS_BLOCK {
+	union {
+		NTSTATUS	Status;
+		PVOID		Pointer;
+	} u;
+	ULONG_PTR		Information;
+} IO_STATUS_BLOCK;
+
+#define OBJ_CASE_INSENSITIVE			0x00000040
+#define GENERIC_WRITE					0x40000000
+#define SYNCHRONIZE						0x00100000
+#define FILE_ATTRIBUTE_NORMAL			0x00000080
+#define FILE_SHARE_READ					0x00000001
+#define FILE_OVERWRITE_IF				0x00000005
+#define FILE_SYNCHRONOUS_IO_NONALERT	0x00000020
+#define FILE_NON_DIRECTORY_FILE			0x00000040
+
+__declspec(dllimport) NTSTATUS NTAPI NtCreateFile(
+	HANDLE *FileHandle, ULONG DesiredAccess, OBJECT_ATTRIBUTES *ObjectAttributes,
+	IO_STATUS_BLOCK *IoStatusBlock, PVOID AllocationSize, ULONG FileAttributes,
+	ULONG ShareAccess, ULONG CreateDisposition, ULONG CreateOptions,
+	PVOID EaBuffer, ULONG EaLength);
+__declspec(dllimport) NTSTATUS NTAPI NtWriteFile(
+	HANDLE FileHandle, HANDLE Event, PVOID ApcRoutine, PVOID ApcContext,
+	IO_STATUS_BLOCK *IoStatusBlock, const void *Buffer, ULONG Length,
+	PVOID ByteOffset, ULONG *Key);
+
+//
 // PEB access (x64).
 //
 
@@ -227,6 +268,8 @@ unsigned __int64 __readgsqword(unsigned long Offset);
 #define KxCurrentPeb()				((BYTE *) __readgsqword(0x60))
 #define KxPebImageBaseAddress()		(*(PVOID *) (KxCurrentPeb() + 0x10))
 #define KxPebNtGlobalFlag()			((ULONG *) (KxCurrentPeb() + 0xBC))
+// PEB.ProcessParameters (+0x20) -> RTL_USER_PROCESS_PARAMETERS.ImagePathName (+0x60)
+#define KxPebImagePathName()		((UNICODE_STRING *) (*(BYTE **) (KxCurrentPeb() + 0x20) + 0x60))
 
 #define FLG_APPLICATION_VERIFIER	0x00000100
 #define FLG_HEAP_PAGE_ALLOCS		0x02000000

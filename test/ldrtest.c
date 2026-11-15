@@ -36,6 +36,11 @@ typedef struct _D3DKMT_OPENADAPTERFROMLUID {
 __declspec(dllimport) NTSTATUS WINAPI D3DKMTOpenAdapterFromLuid(D3DKMT_OPENADAPTERFROMLUID *Args);
 __declspec(dllimport) PVOID KxTestGetImport(void);		// kxgdi-ldrtest-static.dll
 
+static WCHAR UpcaseW(WCHAR c)
+{
+	return (c >= L'a' && c <= L'z') ? (WCHAR) (c - (L'a' - L'A')) : c;
+}
+
 typedef PVOID (*PFN_GETIMPORT)(void);
 typedef PCWSTR (*PFN_GETLOG)(void);
 
@@ -71,7 +76,31 @@ void WINAPI TestMain(void)
 
 	KxGdi = GetModuleHandleW(L"kxgdi.dll");
 	TestCheck(KxGdi != NULL, "kxgdi.dll is loaded");
-	if (KxGdi) KxGdiExport = GetProcAddress(KxGdi, "D3DKMTOpenAdapterFromLuid");
+	if (KxGdi) {
+		// The installed layout: kxgdi.dll comes from System32, not from the
+		// program folder (Test-Loader.ps1 runs us from a folder without it).
+		static const WCHAR System32[] = L"\\SYSTEM32\\KXGDI.DLL";
+		WCHAR Path[300];
+		DWORD Cch = GetModuleFileNameW(KxGdi, Path, 300);
+		PCWSTR Root = KxSharedNtSystemRoot();
+		BOOL FromSystem32 = TRUE;
+		UINT i, j;
+
+		for (i = 0; Root[i]; ++i) {
+			if (i >= Cch || UpcaseW(Path[i]) != UpcaseW(Root[i])) FromSystem32 = FALSE;
+		}
+		for (j = 0; System32[j]; ++j) {
+			if (i + j >= Cch || UpcaseW(Path[i + j]) != System32[j]) FromSystem32 = FALSE;
+		}
+		if (i + j != Cch) FromSystem32 = FALSE;
+
+		TestWrite("         kxgdi.dll path: ");
+		if (Cch > 0 && Cch < 300) { Path[Cch] = 0; TestWriteW(Path); }
+		TestWrite("\r\n");
+		TestCheck(FromSystem32, "kxgdi.dll was loaded from System32");
+
+		KxGdiExport = GetProcAddress(KxGdi, "D3DKMTOpenAdapterFromLuid");
+	}
 
 	Gdi32 = GetModuleHandleW(L"gdi32.dll");
 	if (Gdi32) Gdi32Export = GetProcAddress(Gdi32, "D3DKMTOpenAdapterFromLuid");

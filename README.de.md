@@ -26,6 +26,8 @@ D3DKMTOpenAdapterFromLuid wurde in der DLL GDI32.dll nicht gefunden“).
 - ✅ Unter Windows 11 gebaut und getestet: `kxgdi-test.exe` (beide Suchwege finden den Adapter, Ergebnisse
   stimmen mit der echten Windows-Funktion überein) und der Unit-Test für das Umschreiben der Importe.
 - ✅ Der vollständige Lader-Test (`Test-Loader.ps1`) läuft bei jedem Build auf GitHub Actions (Windows Server).
+  Dort deckt er die Importe des Programms selbst ab. Das Umbiegen bei DLLs und das Abschalten des
+  Application Verifier passieren nur unter Windows 7 und lassen sich nur dort prüfen.
 - ✅ Alle DLLs importieren nur Funktionen, die es unter Windows 7 gibt, und sind als Windows 6.01 markiert.
   `kxgdildr.dll` importiert nur `ntdll.dll`.
 - ⚠️ **Unter Windows 7 noch nicht bestätigt.** Bitte zuerst die beiden Tests unten ausführen und das
@@ -73,10 +75,13 @@ D3DKMTOpenAdapterFromLuid wurde in der DLL GDI32.dll nicht gefunden“).
    ```
    Das Skript kopiert `kxgdildr.dll` und `kxgdi.dll` nach `C:\Windows\System32` und meldet den Lader nur
    für diese beiden Programme an. Ist VxKex (oder VxKex NEXT) für ein Programm aktiviert, wird der Lader
-   daneben eingetragen. Wer VxKex für das Spiel später an- oder abschaltet, führt das Skript erneut aus.
+   dahinter eingetragen. Wer VxKex für das Spiel später an- oder abschaltet, führt das Skript erneut aus.
+   Das Skript installiert nur unter Windows 7 (neuere Versionen haben die Funktion von Haus aus).
 
 6. **Mitlesen (optional, aber hilfreich):** Sysinternals **DebugView** starten. Der Lader meldet sich mit
-   `KxGdiLdr:`-Zeilen, jeder Aufruf der Funktion mit einer `KxGdi:`-Zeile.
+   `KxGdiLdr:`-Zeilen, jeder Aufruf der Funktion mit einer `KxGdi:`-Zeile. Zusätzlich schreibt der Lader
+   sein Protokoll nach `C:\Windows\Temp\kxgdildr-<Programm>.log` (z. B. `kxgdildr-PathOfExile.tmp.log`),
+   auch wenn das Spiel nicht startet. Bitte bei Fehlermeldungen mitschicken.
 
 7. **PoE starten.** Mögliche Ergebnisse:
    - PoE startet → nächster Schritt ist DXVK für die Effekte.
@@ -107,13 +112,17 @@ demselben Befehl plus `-Uninstall`.
 - **Lader:** `kxgdildr.dll` wird nur für das Spiel als „Application Verifier“-Provider angemeldet
   (IFEO-Werte `GlobalFlag`, `VerifierFlags`, `VerifierDlls`; derselbe Mechanismus, den VxKex nutzt).
   Windows lädt ihn, bevor die Importe des Spiels aufgelöst werden. Er benennt in den Importtabellen des
-  Spiels und aller DLLs außerhalb des Windows-Ordners `gdi32.dll` in `kxgdi.dll` um (gleiche Länge, nur im
-  Speicher). Dateien auf der Platte werden nicht verändert. Weil kernel32 zu diesem Zeitpunkt noch nicht
-  nutzbar ist, verwendet der Lader nur ntdll und sammelt sein Protokoll im Speicher; kxgdi.dll gibt es
-  später an DebugView aus. Unter Windows 7 schaltet der Lader danach den Großteil des Application Verifier
-  ab (Heap- und Handle-Überwachung), wie VxKex es auch tut.
-- **Mit VxKex:** `KexDll.dll` von VxKex bleibt an erster Stelle in `VerifierDlls`, kxgdildr kommt dahinter
-  und überlässt den Application Verifier VxKex.
+  Spiels und aller DLLs außerhalb des Windows-Ordners (außer `Windows\Temp`) `gdi32.dll` in `kxgdi.dll` um
+  (gleiche Länge, nur im Speicher) und entfernt bei geänderten Programmen die Tabelle der vorgebundenen
+  Importe. Dateien auf der Platte werden nicht verändert. Weil kernel32 zu diesem Zeitpunkt noch nicht
+  nutzbar ist, verwendet der Lader nur ntdll; er schreibt sein Protokoll nach `Windows\Temp` und hält es im
+  Speicher für kxgdi.dll bereit, die es an DebugView ausgibt. Unter Windows 7 schaltet der Lader danach den
+  Großteil des Application Verifier ab (Heap- und Handle-Überwachung), wie VxKex es auch tut.
+- **Mit VxKex:** Das Installationsskript setzt `KexDll.dll` von VxKex an die erste Stelle in `VerifierDlls`
+  und kxgdildr ans Ende; kxgdildr überlässt den Application Verifier dann VxKex.
+- **Einschränkung:** Lädt eine DLL des Spiels eine andere DLL mit eingeschränktem Suchpfad (z. B. nur aus
+  dem eigenen Ordner, ohne System32), findet sie `kxgdi.dll` nach dem Umbenennen nicht. Für Path of Exile
+  ist kein solcher Fall bekannt.
 - **kxgdi.dll:** enthält die nachgerüsteten Funktionen und leitet alles andere an `gdi32.dll` weiter. Die
   Weiterleitungen stammen aus der `gdi32.dll` von Windows 11 (995 Namen). Weiterleitungen auf Namen, die es
   unter Windows 7 nicht gibt, schaden nicht: Sie schlagen nur fehl, wenn ein Programm genau diese Funktion

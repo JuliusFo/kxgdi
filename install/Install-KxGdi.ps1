@@ -29,7 +29,9 @@ param(
     [string[]] $ExePath,
     [ValidateSet('Loader', 'VxKex')]
     [string]   $Method = 'Loader',
-    [switch]   $Uninstall
+    [switch]   $Uninstall,
+    # Install even if this is not Windows 7 (only useful for testing).
+    [switch]   $Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -55,9 +57,26 @@ if ([IntPtr]::Size -ne 8) {
     Fail 'Please use the 64-bit PowerShell (not "Windows PowerShell (x86)").'
 }
 
+$os = [Environment]::OSVersion.Version
+if (-not $Uninstall -and -not ($os.Major -eq 6 -and $os.Minor -eq 1) -and -not $Force) {
+    # Newer Windows versions have D3DKMTOpenAdapterFromLuid natively, and the
+    # loader only switches Application Verifier off again on Windows 7.
+    Fail "kxgdi is only needed on Windows 7 (this is Windows $($os.Major).$($os.Minor)). Use -Force to install anyway."
+}
+
 #
 # Helpers (shared)
 #
+
+function Get-NormalizedPath([string] $Path) {
+    # Relative paths are relative to the PowerShell location, not the process directory.
+    try {
+        if (-not [IO.Path]::IsPathRooted($Path)) { $Path = Join-Path (Get-Location).ProviderPath $Path }
+        return [IO.Path]::GetFullPath($Path)
+    } catch {
+        return $Path
+    }
+}
 
 function Get-FilterKey([string] $Exe) {
     # VxKex stores per-program settings in an IFEO subkey whose FilterFullPath
@@ -66,14 +85,28 @@ function Get-FilterKey([string] $Exe) {
     $base = Join-Path $IfeoRoot $name
     if (-not (Test-Path $base)) { return $null }
 
+    $full = Get-NormalizedPath $Exe
     foreach ($sub in (Get-ChildItem $base -ErrorAction SilentlyContinue)) {
         $props = Get-ItemProperty $sub.PSPath -ErrorAction SilentlyContinue
-        if ($props -and $props.FilterFullPath -and ($props.FilterFullPath -eq $Exe)) {
+        if ($props -and $props.FilterFullPath -and ((Get-NormalizedPath $props.FilterFullPath) -eq $full)) {
             return $sub.PSPath
         }
     }
 
     return $null
+}
+
+# Other filter subkeys (other paths of a program with the same file name).
+function Get-OtherFilterPaths([string] $Exe) {
+    $base = Join-Path $IfeoRoot ([IO.Path]::GetFileName($Exe))
+    $result = @()
+    if (Test-Path $base) {
+        foreach ($sub in (Get-ChildItem $base -ErrorAction SilentlyContinue)) {
+            $props = Get-ItemProperty $sub.PSPath -ErrorAction SilentlyContinue
+            if ($props -and $props.FilterFullPath) { $result += $props.FilterFullPath }
+        }
+    }
+    return ,$result
 }
 
 function Get-Value($Key, [string] $Name) {
@@ -117,8 +150,14 @@ function Remove-LoaderToken([string[]] $Tokens) {
 }
 
 function Add-LoaderEntry($Key) {
-    $tokens = Remove-LoaderToken (Split-Dlls (Get-Value $Key 'VerifierDlls'))
-    $tokens += $LoaderDll       # after KexDll.dll, if present
+    # Order: KexDll.dll (VxKex) first, then other providers, kxgdildr.dll last.
+    # kxgdildr relies on VxKex having run first to leave Application Verifier
+    # to it.
+    $tokens = @()
+    $others = Remove-LoaderToken (Split-Dlls (Get-Value $Key 'VerifierDlls'))
+    foreach ($t in $others) { if ($t.ToLower() -eq 'kexdll.dll') { $tokens += $t } }
+    foreach ($t in $others) { if ($t.ToLower() -ne 'kexdll.dll') { $tokens += $t } }
+    $tokens += $LoaderDll
     Set-ItemProperty $Key -Name 'VerifierDlls' -Value ($tokens -join ' ')
 
     $flag = ConvertTo-Int (Get-Value $Key 'GlobalFlag')
@@ -205,6 +244,13 @@ function Install-Loader {
         } else {
             $key = Join-Path $IfeoRoot ([IO.Path]::GetFileName($exe))
             if (-not (Test-Path $key)) { New-Item $key -Force | Out-Null }
+
+            $other = Get-OtherFilterPaths $exe
+            if ($other.Count -gt 0) {
+                Write-Host '  Warning: VxKex settings exist for this file name, but for a different path:' -ForegroundColor Yellow
+                foreach ($p in $other) { Write-Host "    $p" -ForegroundColor Yellow }
+                Write-Host '  If that is the same program, run the script again with exactly that path.' -ForegroundColor Yellow
+            }
         }
 
         $value = Add-LoaderEntry $key
@@ -380,6 +426,8 @@ function Uninstall-VxKex {
 #
 # Main
 #
+
+$ExePath = @($ExePath | ForEach-Object { Get-NormalizedPath $_ })
 
 Write-Host "Method: $Method"
 

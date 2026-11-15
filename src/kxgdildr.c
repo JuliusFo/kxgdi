@@ -53,6 +53,72 @@ void *memcpy(void *Dest, const void *Src, SIZE_T Count)
 static WCHAR LdrLog[KXLDR_LOG_CCH];
 static UINT LdrLogLength;
 
+//
+// The log is also written to %SystemRoot%\Temp\kxgdildr-<program>.log, so it
+// is available even if the program fails to start (kxgdi.dll never loads).
+//
+
+static HANDLE LdrLogFile;
+static UINT LdrLogWritten;		// characters already written to the file
+
+static void LogFileOpen(void)
+{
+	static WCHAR Path[300];
+	static const WCHAR Prefix[] = L"\\??\\";
+	static const WCHAR Folder[] = L"\\Temp\\kxgdildr-";
+	static const WCHAR Suffix[] = L".log";
+	PCWSTR Root = KxSharedNtSystemRoot();
+	const UNICODE_STRING *Image = KxPebImagePathName();
+	UNICODE_STRING Name;
+	OBJECT_ATTRIBUTES Attributes;
+	IO_STATUS_BLOCK Io;
+	UINT n = 0, i, Start, Cch;
+	static const WCHAR Bom = 0xFEFF;
+
+	for (i = 0; Prefix[i]; ++i) Path[n++] = Prefix[i];
+	for (i = 0; Root[i] && n < 200; ++i) Path[n++] = Root[i];
+	for (i = 0; Folder[i]; ++i) Path[n++] = Folder[i];
+
+	// File name of the program (after the last backslash), at most 64 characters.
+	Cch = Image->Buffer ? Image->Length / sizeof(WCHAR) : 0;
+	Start = Cch;
+	while (Start > 0 && Image->Buffer[Start - 1] != L'\\') --Start;
+	for (i = Start; i < Cch && i - Start < 64; ++i) Path[n++] = Image->Buffer[i];
+
+	for (i = 0; Suffix[i]; ++i) Path[n++] = Suffix[i];
+	Path[n] = 0;
+
+	Name.Buffer = Path;
+	Name.Length = (USHORT) (n * sizeof(WCHAR));
+	Name.MaximumLength = Name.Length + sizeof(WCHAR);
+
+	memset(&Attributes, 0, sizeof(Attributes));
+	Attributes.Length = sizeof(Attributes);
+	Attributes.ObjectName = &Name;
+	Attributes.Attributes = OBJ_CASE_INSENSITIVE;
+
+	if (!NT_SUCCESS(NtCreateFile(&LdrLogFile, GENERIC_WRITE | SYNCHRONIZE, &Attributes, &Io, NULL,
+			FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_OVERWRITE_IF,
+			FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE, NULL, 0))) {
+		LdrLogFile = NULL;
+		return;
+	}
+
+	// UTF-16 byte order mark, so Notepad shows the file correctly.
+	NtWriteFile(LdrLogFile, NULL, NULL, NULL, &Io, &Bom, sizeof(Bom), NULL, NULL);
+}
+
+static void LogFileFlush(void)
+{
+	IO_STATUS_BLOCK Io;
+
+	if (!LdrLogFile || LdrLogWritten >= LdrLogLength) return;
+
+	NtWriteFile(LdrLogFile, NULL, NULL, NULL, &Io, LdrLog + LdrLogWritten,
+		(LdrLogLength - LdrLogWritten) * sizeof(WCHAR), NULL, NULL);
+	LdrLogWritten = LdrLogLength;
+}
+
 static void LogStr(PCWSTR Text)
 {
 	while (*Text && LdrLogLength < KXLDR_LOG_CCH - 1) {
@@ -99,6 +165,7 @@ static void LogLineStart(void)
 static void LogLineEnd(void)
 {
 	LogStr(L"\r\n");
+	LogFileFlush();
 }
 
 //
@@ -158,7 +225,8 @@ static PCSTR GetReplacementName(PCSTR Name, SIZE_T MaxLength)
 // writable. The image is not executing yet (it was just mapped), so changing
 // the protection for a moment is safe.
 //
-static BOOL WriteImageMemory(void *Dest, const void *Src, SIZE_T Size)
+// Writes within one page, so the original protection of exactly that page is restored.
+static BOOL WriteWithinPage(BYTE *Dest, const BYTE *Src, SIZE_T Size)
 {
 	PVOID Base = Dest;
 	SIZE_T RegionSize = Size;
@@ -174,6 +242,26 @@ static BOOL WriteImageMemory(void *Dest, const void *Src, SIZE_T Size)
 	Base = Dest;
 	RegionSize = Size;
 	NtProtectVirtualMemory(NtCurrentProcess(), &Base, &RegionSize, OldProtect, &Unused);
+	return TRUE;
+}
+
+#define KX_PAGE_SIZE 0x1000
+
+static BOOL WriteImageMemory(void *Dest, const void *Src, SIZE_T Size)
+{
+	BYTE *D = (BYTE *) Dest;
+	const BYTE *S = (const BYTE *) Src;
+
+	while (Size > 0) {
+		SIZE_T ToPageEnd = KX_PAGE_SIZE - ((ULONG_PTR) D & (KX_PAGE_SIZE - 1));
+		SIZE_T Chunk = Size < ToPageEnd ? Size : ToPageEnd;
+
+		if (!WriteWithinPage(D, S, Chunk)) return FALSE;
+		D += Chunk;
+		S += Chunk;
+		Size -= Chunk;
+	}
+
 	return TRUE;
 }
 
@@ -271,6 +359,20 @@ NTSTATUS KxRewriteGdi32Imports(PVOID ImageBase, UINT *Count)
 				}
 			}
 		}
+
+		//
+		// A bound import directory holds pre-computed gdi32 addresses and is
+		// looked up by DLL name. After a rename, the loader would fail to
+		// match it (or keep using gdi32), so it is removed, as VxKex does.
+		//
+
+		if (*Count > 0 && Nt->OptionalHeader.NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT) {
+			IMAGE_DATA_DIRECTORY *Bound = &Nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT];
+			if (Bound->VirtualAddress != 0 || Bound->Size != 0) {
+				IMAGE_DATA_DIRECTORY Empty = {0, 0};
+				WriteImageMemory(Bound, &Empty, sizeof(Empty));
+			}
+		}
 	} __except (1) {
 		return STATUS_ACCESS_VIOLATION;
 	}
@@ -289,18 +391,26 @@ static WCHAR UpcaseW(WCHAR c)
 	return (c >= L'a' && c <= L'z') ? (WCHAR) (c - (L'a' - L'A')) : c;
 }
 
-// TRUE if Path starts with "<SystemRoot>\" (case-insensitive).
+// TRUE if Path starts with "<SystemRoot>\", except "<SystemRoot>\Temp\"
+// (installers and launchers sometimes run from there). Case-insensitive.
 static BOOL IsInSystemRoot(const UNICODE_STRING *Path)
 {
+	static const WCHAR Temp[] = L"\\TEMP\\";
 	PCWSTR Root = KxSharedNtSystemRoot();
 	UINT Cch = Path->Length / sizeof(WCHAR);
-	UINT i;
+	UINT i, j;
 
 	for (i = 0; Root[i]; ++i) {
 		if (i >= Cch || UpcaseW(Root[i]) != UpcaseW(Path->Buffer[i])) return FALSE;
 	}
 
-	return (i > 0 && i < Cch && Path->Buffer[i] == L'\\');
+	if (i == 0 || i >= Cch || Path->Buffer[i] != L'\\') return FALSE;
+
+	for (j = 0; Temp[j]; ++j) {
+		if (i + j >= Cch || UpcaseW(Path->Buffer[i + j]) != Temp[j]) return TRUE;
+	}
+
+	return FALSE;	// inside <SystemRoot>\Temp
 }
 
 static BOOL UnicodeEqualsI(const UNICODE_STRING *A, PCWSTR B)
@@ -445,6 +555,7 @@ static void Initialize(void)
 	UINT Count;
 
 	RtlGetNtVersionNumbers(&Major, &Minor, &Build);
+	LogFileOpen();
 
 	LogLineStart();
 	LogStr(L"loaded on Windows ");

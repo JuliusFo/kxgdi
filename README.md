@@ -25,6 +25,8 @@ point D3DKMTOpenAdapterFromLuid could not be located in the dynamic link library
 - ✅ Built and tested on Windows 11: `kxgdi-test.exe` (both lookup strategies find the adapter, results
   match the native Windows implementation) and the unit test of the loader's import rewriting.
 - ✅ The end-to-end loader test (`Test-Loader.ps1`) runs on every build on GitHub Actions (Windows Server).
+  It covers the game's own imports there. Rewriting the imports of DLLs and switching off Application
+  Verifier only happen on Windows 7 and can only be checked there.
 - ✅ All DLLs only import functions that exist on Windows 7 and are marked as Windows 6.01.
   `kxgdildr.dll` only imports `ntdll.dll`.
 - ⚠️ **Not yet confirmed on Windows 7.** Please run the two tests below first and report the result.
@@ -70,10 +72,13 @@ point D3DKMTOpenAdapterFromLuid could not be located in the dynamic link library
    ```
    The script copies `kxgdildr.dll` and `kxgdi.dll` to `C:\Windows\System32` and registers the loader
    for these two programs only. If VxKex (or VxKex NEXT) is enabled for a program, the loader is added
-   next to it. If you enable or disable VxKex for the game later, run the script again.
+   after it. If you enable or disable VxKex for the game later, run the script again. The script only
+   installs on Windows 7 (newer Windows versions have the function natively).
 
 6. **Watch the log (optional but helpful):** start Sysinternals **DebugView**. You will see `KxGdiLdr:`
-   lines from the loader and `KxGdi:` lines for every call of the function.
+   lines from the loader and `KxGdi:` lines for every call of the function. The loader also writes its
+   log to `C:\Windows\Temp\kxgdildr-<program>.log` (e.g. `kxgdildr-PathOfExile.tmp.log`), even if the
+   game does not start. Please attach it to bug reports.
 
 7. **Start the game.** Possible outcomes:
    - It starts → next step is DXVK for effects.
@@ -104,12 +109,17 @@ command plus `-Uninstall`.
 - **Loader:** `kxgdildr.dll` is registered as an Application Verifier provider for the game only
   (IFEO values `GlobalFlag`, `VerifierFlags`, `VerifierDlls`; the same mechanism VxKex uses). Windows
   loads it before the game's imports are resolved. It renames the `gdi32.dll` entries in the import
-  tables of the game and of every DLL outside the Windows folder to `kxgdi.dll` (same length, changed in
-  memory only). Files on disk are not modified. Since kernel32 is not usable at that point, the loader
-  only uses ntdll and keeps its log in memory; kxgdi.dll prints it to DebugView later. On Windows 7 the
-  loader then switches off most of Application Verifier (heap and handle tracking), like VxKex does.
-- **With VxKex:** VxKex's `KexDll.dll` stays first in `VerifierDlls`, kxgdildr is added after it and
-  leaves Application Verifier to VxKex.
+  tables of the game and of every DLL outside the Windows folder (except `Windows\Temp`) to `kxgdi.dll`
+  (same length, changed in memory only), and removes the bound import table of images it changed.
+  Files on disk are not modified. Since kernel32 is not usable at that point, the loader only uses ntdll;
+  it writes its log to `Windows\Temp` and keeps it in memory for kxgdi.dll, which prints it to DebugView.
+  On Windows 7 the loader then switches off most of Application Verifier (heap and handle tracking),
+  like VxKex does.
+- **Limitation:** a game DLL that loads another DLL with a restricted search path (for example only its
+  own folder, without System32) cannot find `kxgdi.dll` once its gdi32 import is renamed. No such case
+  is known for Path of Exile.
+- **With VxKex:** the installer puts VxKex's `KexDll.dll` first in `VerifierDlls` and kxgdildr last;
+  kxgdildr then leaves Application Verifier to VxKex.
 - **kxgdi.dll:** implements the missing functions and forwards everything else to `gdi32.dll`. The
   forwarder list was generated from the Windows 11 `gdi32.dll` (995 names). Forwarders to names that
   do not exist on Windows 7 are harmless: they only fail if a program imports exactly that function,

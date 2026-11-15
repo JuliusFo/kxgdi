@@ -6,6 +6,8 @@ EXPORTS
     LdrGetDllHandle
     LdrGetProcedureAddress
     LdrRegisterDllNotification
+    NtCreateFile
     NtProtectVirtualMemory
     NtSetInformationProcess
+    NtWriteFile
     RtlGetNtVersionNumbers

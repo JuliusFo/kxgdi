@@ -15,6 +15,7 @@ __declspec(dllimport) HMODULE	WINAPI GetModuleHandleW(PCWSTR ModuleName);
 __declspec(dllimport) HMODULE	WINAPI LoadLibraryW(PCWSTR LibFileName);
 __declspec(dllimport) HMODULE	WINAPI LoadLibraryExW(PCWSTR LibFileName, HANDLE File, DWORD Flags);
 __declspec(dllimport) PVOID		WINAPI GetProcAddress(HMODULE Module, PCSTR ProcName);
+__declspec(dllimport) DWORD		WINAPI GetModuleFileNameW(HMODULE Module, PWSTR FileName, DWORD Size);
 
 static UINT TestFailures;
 

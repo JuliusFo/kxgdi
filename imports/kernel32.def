@@ -6,6 +6,7 @@ EXPORTS
     ExitProcess
     FreeLibrary
     GetCommandLineW
+    GetModuleFileNameW
     GetModuleHandleW
     GetProcAddress
     GetProcessHeap
