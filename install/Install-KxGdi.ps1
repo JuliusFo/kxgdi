@@ -18,20 +18,39 @@
         sets KEX_DllRewriteEntries = gdi32:kxgdi|api-ms-win-dx-d3dkmt:kxgdi.
 
 .EXAMPLE
-    powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-KxGdi.ps1 -ExePath "C:\Program Files (x86)\Steam\steamapps\common\Path of Exile\PathOfExileSteam.exe","C:\...\PathOfExile.tmp"
+    # In PowerShell started with "Run as administrator", in the folder of the script:
+    Set-ExecutionPolicy -Scope Process Bypass -Force
+    .\Install-KxGdi.ps1 -ExePath "C:\Program Files (x86)\Steam\steamapps\common\Path of Exile\PathOfExileSteam.exe","C:\...\PathOfExile.tmp"
+
+.EXAMPLE
+    # The same in one line, also from cmd.exe
+    powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-KxGdi.ps1 -ExePath "C:\...\PathOfExileSteam.exe","C:\...\PathOfExile.tmp"
 
 .EXAMPLE
     # Undo (use the same -Method as for the installation)
     .\Install-KxGdi.ps1 -ExePath "...\PathOfExileSteam.exe","...\PathOfExile.tmp" -Uninstall
+
+.EXAMPLE
+    # Only show which programs the script would configure
+    .\Install-KxGdi.ps1 -ExePath "...\PathOfExileSteam.exe","...\PathOfExile.tmp" -ListPrograms
 #>
 param(
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $true, Position = 0)]
     [string[]] $ExePath,
     [ValidateSet('Loader', 'VxKex')]
     [string]   $Method = 'Loader',
     [switch]   $Uninstall,
     # Install even if this is not Windows 7 (only useful for testing).
-    [switch]   $Force
+    [switch]   $Force,
+    # Only print the programs the script would configure, change nothing.
+    [switch]   $ListPrograms,
+    # Further program paths. "powershell -File" passes every argument as a
+    # single string; depending on the calling shell, -ExePath "a","b" arrives
+    # as one string "a,b" (split in Get-ProgramPaths) or as -ExePath a b, and
+    # this catches the b. The explicit positions keep -Method from taking it
+    # (which was issue #1).
+    [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
+    [string[]] $MorePaths
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,6 +62,57 @@ function Fail($Message) {
     Write-Host "ERROR: $Message" -ForegroundColor Red
     exit 1
 }
+
+#
+# Program paths
+#
+
+function Get-NormalizedPath([string] $Path) {
+    # Relative paths are relative to the PowerShell location, not the process directory.
+    try {
+        if (-not [IO.Path]::IsPathRooted($Path)) { $Path = Join-Path (Get-Location).ProviderPath $Path }
+        return [IO.Path]::GetFullPath($Path)
+    } catch {
+        return $Path
+    }
+}
+
+# Collects the paths from -ExePath and $MorePaths. Besides the array of a
+# direct call (-ExePath "a","b"), this accepts what "powershell -File" makes
+# of it: started from PowerShell, the second path is a separate argument;
+# started from cmd.exe, both paths arrive as one string "a,b". Such a string
+# is split at the commas unless it is an existing file.
+function Get-ProgramPaths {
+    $result = @()
+    foreach ($p in (@($ExePath) + @($MorePaths))) {
+        if ($p -eq $null) { continue }
+        $p = $p.Trim()
+        if ($p -eq '') { continue }
+        if ($p.StartsWith('-')) {
+            Fail "Unknown parameter '$p'. Valid parameters: -ExePath, -Method, -Uninstall, -Force, -ListPrograms."
+        }
+
+        $parts = @($p)
+        if ($p.Contains(',') -and -not (Test-Path -LiteralPath $p -PathType Leaf)) { $parts = $p.Split(',') }
+
+        foreach ($q in $parts) {
+            $q = $q.Trim().Trim('"').Trim()
+            if ($q -eq '') { continue }
+            $q = Get-NormalizedPath $q
+            $dup = $false
+            foreach ($r in $result) { if ($r -eq $q) { $dup = $true } }   # -eq ignores case
+            if (-not $dup) { $result += $q }
+        }
+    }
+    return ,$result
+}
+
+$ExePath = Get-ProgramPaths
+if ($ExePath.Count -eq 0) { Fail 'No program path given (-ExePath).' }
+
+Write-Host 'Programs:'
+foreach ($exe in $ExePath) { Write-Host "  $exe" }
+if ($ListPrograms) { exit 0 }
 
 #
 # Preconditions
@@ -67,16 +137,6 @@ if (-not $Uninstall -and -not ($os.Major -eq 6 -and $os.Minor -eq 1) -and -not $
 #
 # Helpers (shared)
 #
-
-function Get-NormalizedPath([string] $Path) {
-    # Relative paths are relative to the PowerShell location, not the process directory.
-    try {
-        if (-not [IO.Path]::IsPathRooted($Path)) { $Path = Join-Path (Get-Location).ProviderPath $Path }
-        return [IO.Path]::GetFullPath($Path)
-    } catch {
-        return $Path
-    }
-}
 
 function Get-FilterKey([string] $Exe) {
     # VxKex stores per-program settings in an IFEO subkey whose FilterFullPath
@@ -426,8 +486,6 @@ function Uninstall-VxKex {
 #
 # Main
 #
-
-$ExePath = @($ExePath | ForEach-Object { Get-NormalizedPath $_ })
 
 Write-Host "Method: $Method"
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.2.1
+
+- **Fixed: the install command from the v0.2.0 instructions did not work with two paths**
+  ([#1](https://github.com/JuliusFo/kxgdi/issues/1)). `powershell -File` passes every argument as a single
+  string, so the second path ended up in `-Method` ("does not belong to the set Loader,VxKex"), or, from
+  cmd.exe, both paths were read as one. `Install-KxGdi.ps1` now accepts all these forms, lists the
+  programs it will set up under `Programs:`, and rejects mistyped parameters instead of taking them as
+  paths.
+- The instructions now run the installer directly in an administrator PowerShell
+  (`Set-ExecutionPolicy -Scope Process Bypass -Force`, then `.\Install-KxGdi.ps1 -ExePath "…","…"`).
+- New option `-ListPrograms`: only shows which programs the installer would set up, changes nothing.
+- New test `test\Test-InstallerArgs.ps1` starts the installer the ways users do (from PowerShell, from
+  cmd.exe, directly) and runs on every build.
+
 ## v0.2.0
 
 - **New: standalone loader `kxgdildr.dll`.** kxgdi no longer needs VxKex. The loader is registered as an

@@ -14,8 +14,8 @@
       kxgdildr-unit.exe            unit test of the import rewriting
       kxgdi-ldrtest.exe (+ DLLs)   end-to-end loader test (needs Test-Loader.ps1)
 
-    -Test runs kxgdi-test.exe and kxgdildr-unit.exe; when running as
-    administrator it also runs the end-to-end loader test.
+    -Test runs kxgdi-test.exe, kxgdildr-unit.exe and the installer argument
+    test; when running as administrator it also runs the end-to-end loader test.
 #>
 param(
     [switch] $RegenerateDef,
@@ -108,6 +108,11 @@ if ($Test) {
     } finally {
         Pop-Location
     }
+
+    # Through Windows PowerShell on purpose: how arguments reach
+    # "powershell -File" depends on the calling shell (see the test).
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$root\test\Test-InstallerArgs.ps1"
+    if ($LASTEXITCODE -ne 0) { throw "Test-InstallerArgs.ps1 reported $LASTEXITCODE failed check(s)" }
 
     $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {

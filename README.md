@@ -67,10 +67,18 @@ point D3DKMTOpenAdapterFromLuid could not be located in the dynamic link library
 4. **Find the path of the `.tmp` file.** The error message mentions `PathOfExile.tmp`. While the error
    dialog is open: Task Manager → "Processes" tab → right-click `PathOfExile.tmp` → "Open file location".
 
-5. **Install** (PowerShell as administrator, adjust the paths, list both programs):
+5. **Install** (PowerShell as administrator; adjust the paths and list both programs, separated by a
+   comma):
    ```
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-KxGdi.ps1 -ExePath "C:\Program Files (x86)\Steam\steamapps\common\Path of Exile\PathOfExileSteam.exe","<path to PathOfExile.tmp>"
+   cd C:\kxgdi
+   Set-ExecutionPolicy -Scope Process Bypass -Force
+   .\Install-KxGdi.ps1 -ExePath "C:\Program Files (x86)\Steam\steamapps\common\Path of Exile\PathOfExileSteam.exe","<path to PathOfExile.tmp>"
    ```
+   The second line allows scripts in this PowerShell window only. The script first prints the programs
+   it will set up under `Programs:`; both paths should be listed there.
+   > With **kxgdi v0.2.0**, the one-line `powershell -File …` command from its instructions does not work
+   > with two paths ([issue #1](https://github.com/JuliusFo/kxgdi/issues/1)). Use the commands above.
+
    The script copies `kxgdildr.dll` and `kxgdi.dll` to `C:\Windows\System32` and registers the loader
    for these two programs only. If VxKex (or VxKex NEXT) is enabled for a program, the loader is added
    after it. If you enable or disable VxKex for the game later, run the script again. The script only
@@ -89,9 +97,9 @@ point D3DKMTOpenAdapterFromLuid could not be located in the dynamic link library
    - A crash → please attach the Event Viewer entry (Windows Logs → Application, "Application Error")
      and the DebugView output.
 
-**Uninstall:**
+**Uninstall** (PowerShell as administrator, first two lines as in step 5):
 ```
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-KxGdi.ps1 -ExePath "<same paths as above>" -Uninstall
+.\Install-KxGdi.ps1 -ExePath "<same paths as above>" -Uninstall
 ```
 This removes the loader registration and, if no other program uses it, the two DLLs from System32.
 Close the game first.
@@ -101,8 +109,9 @@ Close the game first.
 Instead of the loader, kxgdi can be plugged into [i486/VxKex](https://github.com/i486/VxKex/releases)
 1.2.0 or later via its `KEX_DllRewriteEntries` setting (VxKex NEXT does not support this setting):
 ```
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-KxGdi.ps1 -Method VxKex -ExePath "<paths>"
+.\Install-KxGdi.ps1 -Method VxKex -ExePath "<paths>"
 ```
+(PowerShell as administrator, first two lines as in step 5.)
 This copies `kxgdi.dll` to `<VxKex>\Kex64` and enables VxKex for the programs. Uninstall with the same
 command plus `-Uninstall`.
 
@@ -145,7 +154,8 @@ pwsh .\tools\gen-def.ps1 -Gdi32 C:\Windows\System32\gdi32.dll, D:\win7\gdi32.dll
 pwsh .\tools\package.ps1            # dist\kxgdi-win7-x64.zip
 ```
 
-`build.ps1 -Test` runs `kxgdi-test.exe` and `kxgdildr-unit.exe`; as administrator it also runs the
+`build.ps1 -Test` runs `kxgdi-test.exe`, `kxgdildr-unit.exe` and `test\Test-InstallerArgs.ps1` (how the
+installer reads its paths when started from PowerShell or cmd.exe); as administrator it also runs the
 end-to-end `test\Test-Loader.ps1`. On build servers without a display adapter the kxgdi test runs with
 `/ci` and skips the adapter checks.
 
@@ -168,6 +178,7 @@ Adding functions: implement them as `Ext_<Name>` in `src\kxgdi.c`, add them to `
 | `test\test.c` | Self-test of kxgdi.dll, runs on Windows 7 and later |
 | `test\ldrunit.c` | Unit test of the import rewriting |
 | `test\ldrtest.c`, `test\ldrtest-dll.c`, `test\Test-Loader.ps1` | End-to-end loader test (administrator) |
+| `test\Test-InstallerArgs.ps1` | Test of the installer's command line (changes nothing) |
 | `install\Install-KxGdi.ps1` | Installer (PowerShell 2.0) |
 | `tools\gen-def.ps1`, `tools\package.ps1` | Generator and packaging |
 | `.github\workflows\build.yml` | CI build and releases |

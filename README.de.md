@@ -69,10 +69,19 @@ D3DKMTOpenAdapterFromLuid wurde in der DLL GDI32.dll nicht gefunden“).
    Fehlerfenster offen ist: Task-Manager → Reiter „Prozesse“ → Rechtsklick auf `PathOfExile.tmp` →
    „Dateipfad öffnen“.
 
-5. **Installieren** (PowerShell als Administrator, Pfade anpassen, beide Programme angeben):
+5. **Installieren** (PowerShell als Administrator; Pfade anpassen und beide Programme mit Komma getrennt
+   angeben):
    ```
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-KxGdi.ps1 -ExePath "C:\Program Files (x86)\Steam\steamapps\common\Path of Exile\PathOfExileSteam.exe","<Pfad zur PathOfExile.tmp>"
+   cd C:\kxgdi
+   Set-ExecutionPolicy -Scope Process Bypass -Force
+   .\Install-KxGdi.ps1 -ExePath "C:\Program Files (x86)\Steam\steamapps\common\Path of Exile\PathOfExileSteam.exe","<Pfad zur PathOfExile.tmp>"
    ```
+   Die zweite Zeile erlaubt Skripte nur in diesem PowerShell-Fenster. Das Skript listet zuerst unter
+   `Programs:` die Programme auf, die es einrichtet; dort sollten beide Pfade stehen.
+   > Mit **kxgdi v0.2.0** funktioniert der einzeilige Befehl `powershell -File …` aus dessen Anleitung mit
+   > zwei Pfaden nicht ([Issue #1](https://github.com/JuliusFo/kxgdi/issues/1)). Bitte die Befehle oben
+   > verwenden.
+
    Das Skript kopiert `kxgdildr.dll` und `kxgdi.dll` nach `C:\Windows\System32` und meldet den Lader nur
    für diese beiden Programme an. Ist VxKex (oder VxKex NEXT) für ein Programm aktiviert, wird der Lader
    dahinter eingetragen. Wer VxKex für das Spiel später an- oder abschaltet, führt das Skript erneut aus.
@@ -90,9 +99,9 @@ D3DKMTOpenAdapterFromLuid wurde in der DLL GDI32.dll nicht gefunden“).
      fehlende Funktion, die nachgerüstet werden muss.
    - Absturz → Ereignisanzeige (Anwendung, „Application Error“) und DebugView-Ausgabe in einem Issue posten.
 
-**Rückgängig machen:**
+**Rückgängig machen** (PowerShell als Administrator, die ersten beiden Zeilen wie in Schritt 5):
 ```
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-KxGdi.ps1 -ExePath "<gleiche Pfade wie oben>" -Uninstall
+.\Install-KxGdi.ps1 -ExePath "<gleiche Pfade wie oben>" -Uninstall
 ```
 Entfernt die Anmeldung des Laders und, wenn kein anderes Programm ihn nutzt, die beiden DLLs aus System32.
 Vorher das Spiel schließen.
@@ -103,8 +112,9 @@ Statt des Laders lässt sich kxgdi über die Einstellung `KEX_DllRewriteEntries`
 [i486/VxKex](https://github.com/i486/VxKex/releases) ab Version 1.2.0 einklinken (VxKex NEXT kennt diese
 Einstellung nicht):
 ```
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-KxGdi.ps1 -Method VxKex -ExePath "<Pfade>"
+.\Install-KxGdi.ps1 -Method VxKex -ExePath "<Pfade>"
 ```
+(PowerShell als Administrator, die ersten beiden Zeilen wie in Schritt 5.)
 Das kopiert `kxgdi.dll` nach `<VxKex>\Kex64` und aktiviert VxKex für die Programme. Rückgängig mit
 demselben Befehl plus `-Uninstall`.
 
@@ -147,7 +157,8 @@ pwsh .\tools\gen-def.ps1 -Gdi32 C:\Windows\System32\gdi32.dll, D:\win7\gdi32.dll
 pwsh .\tools\package.ps1            # dist\kxgdi-win7-x64.zip
 ```
 
-`build.ps1 -Test` führt `kxgdi-test.exe` und `kxgdildr-unit.exe` aus, als Administrator zusätzlich den
+`build.ps1 -Test` führt `kxgdi-test.exe`, `kxgdildr-unit.exe` und `test\Test-InstallerArgs.ps1` aus (wie
+der Installer seine Pfade liest, wenn er aus PowerShell oder cmd.exe gestartet wird), als Administrator zusätzlich den
 vollständigen `test\Test-Loader.ps1`. Auf Build-Servern ohne Grafikadapter läuft der kxgdi-Test mit `/ci`
 und überspringt die Adapter-Prüfungen.
 
@@ -170,6 +181,7 @@ Weitere Funktionen nachrüsten: In `src\kxgdi.c` als `Ext_<Name>` implementieren
 | `test\test.c` | Selbsttest von kxgdi.dll, läuft unter Windows 7 und neuer |
 | `test\ldrunit.c` | Unit-Test für das Umschreiben der Importe |
 | `test\ldrtest.c`, `test\ldrtest-dll.c`, `test\Test-Loader.ps1` | Vollständiger Lader-Test (Administrator) |
+| `test\Test-InstallerArgs.ps1` | Test der Befehlszeile des Installers (ändert nichts) |
 | `install\Install-KxGdi.ps1` | Installation (PowerShell 2.0) |
 | `tools\gen-def.ps1`, `tools\package.ps1` | Generator und Paketbau |
 | `.github\workflows\build.yml` | CI-Build und Releases |
