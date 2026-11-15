@@ -1,0 +1,11 @@
+;; Import definitions used to create ntdll.lib without the Windows SDK.
+;; Only functions that exist on Windows 7 x64.
+LIBRARY ntdll.dll
+EXPORTS
+    __C_specific_handler
+    LdrGetDllHandle
+    LdrGetProcedureAddress
+    LdrRegisterDllNotification
+    NtProtectVirtualMemory
+    NtSetInformationProcess
+    RtlGetNtVersionNumbers

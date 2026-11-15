@@ -186,6 +186,9 @@ __declspec(dllimport) HANDLE	WINAPI GetProcessHeap(void);
 __declspec(dllimport) PVOID		WINAPI HeapAlloc(HANDLE Heap, DWORD Flags, SIZE_T Bytes);
 __declspec(dllimport) BOOL		WINAPI HeapFree(HANDLE Heap, DWORD Flags, PVOID Mem);
 __declspec(dllimport) void		WINAPI OutputDebugStringW(PCWSTR OutputString);
+__declspec(dllimport) HMODULE	WINAPI GetModuleHandleW(PCWSTR ModuleName);
+
+typedef PCWSTR (*PFN_KXGDILDRGETLOG)(void);
 
 __declspec(dllimport) NTSTATUS	WINAPI D3DKMTOpenAdapterFromGdiDisplayName(
 	D3DKMT_OPENADAPTERFROMGDIDISPLAYNAME *Args);
@@ -530,7 +533,24 @@ BOOL WINAPI DllMain(
 	(void) Reserved;
 
 	if (Reason == DLL_PROCESS_ATTACH) {
+		HMODULE Loader;
+
 		DisableThreadLibraryCalls(DllHandle);
+
+		//
+		// When the standalone loader (kxgdildr.dll) brought us in, print its
+		// log now. It ran before kernel32 was usable and could not print
+		// anything itself.
+		//
+
+		Loader = GetModuleHandleW(L"kxgdildr.dll");
+		if (Loader) {
+			PFN_KXGDILDRGETLOG GetLog = (PFN_KXGDILDRGETLOG) GetProcAddress(Loader, "KxGdiLdrGetLog");
+			if (GetLog) {
+				PCWSTR Text = GetLog();
+				if (Text && Text[0]) OutputDebugStringW(Text);
+			}
+		}
 	}
 
 	return TRUE;

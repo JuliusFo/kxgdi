@@ -1,9 +1,11 @@
-# kxgdi – gdi32-Erweiterung für VxKex (Windows 7, x64)
+# kxgdi – fehlende gdi32-Funktionen für Windows 7 (x64)
 
 [English version](README.md)
 
-`kxgdi.dll` ergänzt [VxKex](https://github.com/i486/VxKex) um Funktionen aus `gdi32.dll`, die es erst ab Windows 8 gibt.
-Alle anderen gdi32-Funktionen (994 Stück) werden unverändert an die echte `gdi32.dll` weitergereicht.
+`kxgdi.dll` stellt Funktionen aus `gdi32.dll` bereit, die es erst ab Windows 8 gibt. Alle anderen
+gdi32-Funktionen (994 Stück) werden unverändert an die echte `gdi32.dll` weitergereicht. Es funktioniert
+allein mit dem mitgelieferten Lader oder zusammen mit [VxKex](https://github.com/i486/VxKex), auch mit
+VxKex NEXT.
 
 Bisher nachgerüstet:
 
@@ -14,59 +16,69 @@ Bisher nachgerüstet:
 Anlass: Path of Exile startet unter Windows 7 nicht mehr („Der Prozedureinsprungpunkt
 D3DKMTOpenAdapterFromLuid wurde in der DLL GDI32.dll nicht gefunden“).
 
+> [!WARNING]
+> **Experimentell.** Kein Bezug zu Grinding Gear Games oder VxKex. Windows 7 wird von Path of Exile
+> nicht unterstützt. kxgdi klinkt sich in den Spielprozess ein. Ein Bann ist unwahrscheinlich, aber nicht
+> ausgeschlossen. Nutzung auf eigenes Risiko.
+
 ## Stand
 
-- ✅ Unter Windows 11 gebaut und getestet (`kxgdi-test.exe`): Beide Suchwege finden den Adapter,
-  Rückgabewerte stimmen mit der echten Windows-Funktion überein (Erfolg bzw. `0xC000000D` bei unbekannter LUID),
-  weitergeleitete Funktionen landen in `gdi32.dll`.
-- ✅ Die DLL importiert nur Funktionen, die es unter Windows 7 gibt, und ist als Windows 6.01 markiert.
-- ⚠️ **Unter Windows 7 noch nicht getestet.** Der erste Schritt ist deshalb `kxgdi-test.exe` auf dem Windows-7-PC.
+- ✅ Unter Windows 11 gebaut und getestet: `kxgdi-test.exe` (beide Suchwege finden den Adapter, Ergebnisse
+  stimmen mit der echten Windows-Funktion überein) und der Unit-Test für das Umschreiben der Importe.
+- ✅ Der vollständige Lader-Test (`Test-Loader.ps1`) läuft bei jedem Build auf GitHub Actions (Windows Server).
+- ✅ Alle DLLs importieren nur Funktionen, die es unter Windows 7 gibt, und sind als Windows 6.01 markiert.
+  `kxgdildr.dll` importiert nur `ntdll.dll`.
+- ⚠️ **Unter Windows 7 noch nicht bestätigt.** Bitte zuerst die beiden Tests unten ausführen und das
+  Ergebnis melden.
 - Nur 64 Bit (Path of Exile ist 64 Bit).
 
 ## Wichtig vorab
 
-- **Grafikproblem bleibt:** Selbst wenn PoE damit startet, lehnt DirectX 11 unter Windows 7 die neuen
-  Partikel-Shader weiterhin ab, und der Vulkan-Treiber 471.96 stürzt ab. Für Effekte braucht es zusätzlich DXVK.
-- **Nutzungsbedingungen:** VxKex und kxgdi klinken sich in den Spielprozess ein. Ein Bann ist unwahrscheinlich,
-  aber nicht ausgeschlossen. Im Zweifel vorher beim GGG-Support nachfragen.
+- **Grafikproblem bleibt:** Selbst wenn PoE startet, lehnt DirectX 11 unter Windows 7 die neuen
+  Partikel-Shader weiterhin ab, und ältere Vulkan-Treiber stürzen ab. Für Effekte braucht es zusätzlich
+  [DXVK](https://github.com/doitsujin/dxvk) 1.10.3 (letzte Version für Vulkan 1.2).
 - Es kann weitere fehlende Funktionen geben. Windows meldet immer nur die erste.
 
 ## Anleitung für den Windows-7-PC
 
-**Voraussetzungen:** Windows 7 SP1 64 Bit, **VxKex ab Version 1.2.0** (empfohlen: 1.2.2.2316 von
-`github.com/i486/VxKex/releases`). Ältere Versionen und *VxKex NEXT* kennen die nötige Einstellung
-`KEX_DllRewriteEntries` nicht.
+**Voraussetzungen:** Windows 7 SP1 64 Bit. VxKex wird **nicht** gebraucht.
 
-1. **Paket entpacken**, z. B. nach `C:\kxgdi`.
+1. **Release-Zip entpacken**, z. B. nach `C:\kxgdi`.
 
-2. **Selbsttest:** Eingabeaufforderung öffnen und ausführen:
+2. **Selbsttest von kxgdi:** Eingabeaufforderung öffnen und ausführen:
    ```
    cd /d C:\kxgdi
    kxgdi-test.exe
    ```
    Erwartet: viele `[ OK ]`, am Ende `RESULT: all checks passed`. Die Zeile
    `No native D3DKMTOpenAdapterFromLuid (Windows 7)` ist dabei richtig.
-   Bei `[FAIL]`: Ausgabe in einem Issue posten und **nicht weitermachen**.
 
-3. **Pfad der `.tmp`-Datei herausfinden.** Die Fehlermeldung nannte `PathOfExile.tmp`. Während das Fehlerfenster
-   offen ist: Task-Manager → Reiter „Prozesse“ → Rechtsklick auf `PathOfExile.tmp` → „Dateipfad öffnen“.
-
-4. **Installieren:** PowerShell **als Administrator** öffnen (64 Bit, nicht „x86“) und ausführen
-   (Pfade anpassen, beide Programme angeben):
+3. **Lader-Test:** PowerShell **als Administrator** öffnen (64 Bit, nicht „x86“) und ausführen:
    ```
    cd C:\kxgdi
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\Test-Loader.ps1
+   ```
+   Das startet ein kleines Testprogramm, das die fehlende Funktion genauso importiert wie das Spiel, und
+   räumt danach alles wieder auf. Erwartet: `Loader test passed`.
+   Zeigt einer der Tests `[FAIL]` oder startet das Testprogramm nicht: Ausgabe in einem Issue posten und
+   **nicht weitermachen**.
+
+4. **Pfad der `.tmp`-Datei herausfinden.** Die Fehlermeldung nannte `PathOfExile.tmp`. Während das
+   Fehlerfenster offen ist: Task-Manager → Reiter „Prozesse“ → Rechtsklick auf `PathOfExile.tmp` →
+   „Dateipfad öffnen“.
+
+5. **Installieren** (PowerShell als Administrator, Pfade anpassen, beide Programme angeben):
+   ```
    powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-KxGdi.ps1 -ExePath "C:\Program Files (x86)\Steam\steamapps\common\Path of Exile\PathOfExileSteam.exe","<Pfad zur PathOfExile.tmp>"
    ```
-   Das Skript
-   - kopiert `kxgdi.dll` nach `<VxKex>\Kex64\`,
-   - aktiviert VxKex für die angegebenen Programme,
-   - setzt in deren VxKex-Einstellungen `KEX_DllRewriteEntries = gdi32:kxgdi|api-ms-win-dx-d3dkmt:kxgdi`.
-     Vorhandene andere Einträge bleiben erhalten.
+   Das Skript kopiert `kxgdildr.dll` und `kxgdi.dll` nach `C:\Windows\System32` und meldet den Lader nur
+   für diese beiden Programme an. Ist VxKex (oder VxKex NEXT) für ein Programm aktiviert, wird der Lader
+   daneben eingetragen. Wer VxKex für das Spiel später an- oder abschaltet, führt das Skript erneut aus.
 
-5. **Mitlesen (optional, aber hilfreich):** Sysinternals **DebugView** starten. kxgdi meldet jeden Aufruf mit
-   `KxGdi: D3DKMTOpenAdapterFromLuid(...) -> ...`.
+6. **Mitlesen (optional, aber hilfreich):** Sysinternals **DebugView** starten. Der Lader meldet sich mit
+   `KxGdiLdr:`-Zeilen, jeder Aufruf der Funktion mit einer `KxGdi:`-Zeile.
 
-6. **PoE starten.** Mögliche Ergebnisse:
+7. **PoE starten.** Mögliche Ergebnisse:
    - PoE startet → nächster Schritt ist DXVK für die Effekte.
    - Neue Meldung „Einsprungpunkt … nicht gefunden“ → Screenshot in einem Issue posten. Das ist die nächste
      fehlende Funktion, die nachgerüstet werden muss.
@@ -76,50 +88,72 @@ D3DKMTOpenAdapterFromLuid wurde in der DLL GDI32.dll nicht gefunden“).
 ```
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-KxGdi.ps1 -ExePath "<gleiche Pfade wie oben>" -Uninstall
 ```
-Entfernt die Umleitung und `kxgdi.dll`. VxKex selbst bleibt aktiviert und lässt sich im Eigenschaften-Dialog
-(Reiter „VxKex“) abschalten.
+Entfernt die Anmeldung des Laders und, wenn kein anderes Programm ihn nutzt, die beiden DLLs aus System32.
+Vorher das Spiel schließen.
+
+### Alternative: über VxKex (i486/VxKex ab 1.2.0)
+
+Statt des Laders lässt sich kxgdi über die Einstellung `KEX_DllRewriteEntries` in
+[i486/VxKex](https://github.com/i486/VxKex/releases) ab Version 1.2.0 einklinken (VxKex NEXT kennt diese
+Einstellung nicht):
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-KxGdi.ps1 -Method VxKex -ExePath "<Pfade>"
+```
+Das kopiert `kxgdi.dll` nach `<VxKex>\Kex64` und aktiviert VxKex für die Programme. Rückgängig mit
+demselben Befehl plus `-Uninstall`.
 
 ## Technische Details
 
-- VxKex schreibt beim Laden die DLL-Namen in den Importtabellen der Programm-DLLs um. Mit
-  `KEX_DllRewriteEntries` (IFEO, ab VxKex 1.2.0) lässt sich das pro Programm erweitern, ohne VxKex neu zu bauen.
-  Der neue Name darf nicht länger als der alte sein: `kxgdi` und `gdi32` haben beide 5 Zeichen.
-- `kxgdi.dll` muss in `<VxKex>\Kex64` liegen. DLLs dort schreibt VxKex nicht um, deshalb erreicht der eigene
-  gdi32-Import von kxgdi die echte `gdi32.dll`. Liegt die DLL woanders, würde VxKex ihren gdi32-Import auf sie
-  selbst umbiegen.
-- Die Weiterleitungen stammen aus der `gdi32.dll` von Windows 11 (995 Namen). Weiterleitungen auf Namen, die es
+- **Lader:** `kxgdildr.dll` wird nur für das Spiel als „Application Verifier“-Provider angemeldet
+  (IFEO-Werte `GlobalFlag`, `VerifierFlags`, `VerifierDlls`; derselbe Mechanismus, den VxKex nutzt).
+  Windows lädt ihn, bevor die Importe des Spiels aufgelöst werden. Er benennt in den Importtabellen des
+  Spiels und aller DLLs außerhalb des Windows-Ordners `gdi32.dll` in `kxgdi.dll` um (gleiche Länge, nur im
+  Speicher). Dateien auf der Platte werden nicht verändert. Weil kernel32 zu diesem Zeitpunkt noch nicht
+  nutzbar ist, verwendet der Lader nur ntdll und sammelt sein Protokoll im Speicher; kxgdi.dll gibt es
+  später an DebugView aus. Unter Windows 7 schaltet der Lader danach den Großteil des Application Verifier
+  ab (Heap- und Handle-Überwachung), wie VxKex es auch tut.
+- **Mit VxKex:** `KexDll.dll` von VxKex bleibt an erster Stelle in `VerifierDlls`, kxgdildr kommt dahinter
+  und überlässt den Application Verifier VxKex.
+- **kxgdi.dll:** enthält die nachgerüsteten Funktionen und leitet alles andere an `gdi32.dll` weiter. Die
+  Weiterleitungen stammen aus der `gdi32.dll` von Windows 11 (995 Namen). Weiterleitungen auf Namen, die es
   unter Windows 7 nicht gibt, schaden nicht: Sie schlagen nur fehl, wenn ein Programm genau diese Funktion
-  importiert, und das passiert ohne kxgdi genauso. Programme, die mit einem aktuellen SDK gebaut sind (wie PoE),
-  können ohnehin nur Namen importieren, die es in der heutigen gdi32 gibt.
+  importiert, und das passiert ohne kxgdi genauso.
 
 ## Bauen
 
-Voraussetzung: Visual Studio bzw. Build Tools mit den MSVC-x64-Werkzeugen. Ein Windows-SDK ist **nicht** nötig,
-denn der Code nutzt keine SDK-Header und keine C-Laufzeitbibliothek, und die Import-Bibliotheken werden aus
-`imports\*.def` erzeugt.
+Voraussetzung: Visual Studio bzw. Build Tools mit den MSVC-x64-Werkzeugen. Ein Windows-SDK ist **nicht**
+nötig, denn der Code nutzt keine SDK-Header und keine C-Laufzeitbibliothek, und die Import-Bibliotheken
+werden aus `imports\*.def` erzeugt.
 
 ```
-pwsh .\build.ps1 -Test              # baut out\x64\kxgdi.dll + kxgdi-test.exe und testet
+pwsh .\build.ps1 -Test              # baut alles nach out\x64 und testet
 pwsh .\build.ps1 -RegenerateDef     # Weiterleitungsliste aus der lokalen gdi32.dll neu erzeugen
 pwsh .\tools\gen-def.ps1 -Gdi32 C:\Windows\System32\gdi32.dll, D:\win7\gdi32.dll   # Win7-Exporte ergänzen
-pwsh .\tools\package.ps1            # dist\kxgdi-win7-x64.zip für den Windows-7-PC
+pwsh .\tools\package.ps1            # dist\kxgdi-win7-x64.zip
 ```
 
+`build.ps1 -Test` führt `kxgdi-test.exe` und `kxgdildr-unit.exe` aus, als Administrator zusätzlich den
+vollständigen `test\Test-Loader.ps1`. Auf Build-Servern ohne Grafikadapter läuft der kxgdi-Test mit `/ci`
+und überspringt die Adapter-Prüfungen.
+
 Release-Dateien baut GitHub Actions (`.github\workflows\build.yml`): Workflow von Hand mit einer Version wie
-`v0.1.0` starten. Er legt einen Release-Entwurf (Vorabversion) mit Zip, Prüfsummen und dem passenden
-Abschnitt aus [CHANGELOG.md](CHANGELOG.md) an. Erst beim Veröffentlichen des Entwurfs entsteht der Tag. Auf
-Build-Servern ohne Grafikadapter läuft der Test mit `/ci` und überspringt die Adapter-Prüfungen.
+`v0.2.0` starten. Er legt einen Release-Entwurf (Vorabversion) mit Zip, Prüfsummen und dem passenden
+Abschnitt aus [CHANGELOG.md](CHANGELOG.md) an. Erst beim Veröffentlichen des Entwurfs entsteht der Tag.
 
 Weitere Funktionen nachrüsten: In `src\kxgdi.c` als `Ext_<Name>` implementieren, in `tools\gen-def.ps1` in
 `$Implemented` eintragen, `build.ps1 -RegenerateDef -Test` ausführen.
 
 | Datei | Inhalt |
 |---|---|
-| `src\kxgdi.c` | Implementierung |
+| `src\kxgdi.c` | Nachgerüstete Funktionen |
 | `src\kxgdi.def` | Exporte (generiert) |
+| `src\kxgdildr.c` | Eigenständiger Lader (Application-Verifier-Provider, nur ntdll) |
+| `src\kxtypes.h` | Minimale Windows-/NT-Typen für Lader und Tests |
 | `imports\*.def` | Import-Bibliotheken ohne SDK (`gdi32.def` generiert) |
-| `test\test.c` | Selbsttest, läuft unter Windows 7 und neuer |
-| `install\Install-KxGdi.ps1` | Installation auf dem Windows-7-PC (PowerShell 2.0) |
+| `test\test.c` | Selbsttest von kxgdi.dll, läuft unter Windows 7 und neuer |
+| `test\ldrunit.c` | Unit-Test für das Umschreiben der Importe |
+| `test\ldrtest.c`, `test\ldrtest-dll.c`, `test\Test-Loader.ps1` | Vollständiger Lader-Test (Administrator) |
+| `install\Install-KxGdi.ps1` | Installation (PowerShell 2.0) |
 | `tools\gen-def.ps1`, `tools\package.ps1` | Generator und Paketbau |
 | `.github\workflows\build.yml` | CI-Build und Releases |
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.2.0
+
+- **New: standalone loader `kxgdildr.dll`.** kxgdi no longer needs VxKex. The loader is registered as an
+  Application Verifier provider for the game only, and renames the game's `gdi32.dll` imports to
+  `kxgdi.dll` before they are resolved. It also works alongside VxKex NEXT and i486/VxKex.
+- `Install-KxGdi.ps1` uses the loader by default (`-Method Loader`). The previous method via
+  `KEX_DllRewriteEntries` (i486/VxKex 1.2.0+) is still available with `-Method VxKex`.
+- New end-to-end test `Test-Loader.ps1` (needs administrator rights): runs a test program that imports
+  `D3DKMTOpenAdapterFromLuid` from `gdi32.dll` like the game, then removes everything again.
+- kxgdi.dll prints the loader log to DebugView (`KxGdiLdr:` lines).
+
+**Not yet confirmed on Windows 7.** Please run `Test-Loader.ps1` and `kxgdi-test.exe` and report the
+result in an issue.
+
 ## v0.1.0
 
 First experimental release.

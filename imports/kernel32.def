@@ -4,13 +4,15 @@ LIBRARY kernel32.dll
 EXPORTS
     DisableThreadLibraryCalls
     ExitProcess
+    FreeLibrary
     GetCommandLineW
+    GetModuleHandleW
     GetProcAddress
     GetProcessHeap
     GetStdHandle
     HeapAlloc
     HeapFree
+    LoadLibraryExW
     LoadLibraryW
-    FreeLibrary
     OutputDebugStringW
     WriteFile

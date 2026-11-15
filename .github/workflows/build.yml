@@ -35,7 +35,7 @@ jobs:
       - name: SHA-256 checksums
         shell: pwsh
         run: |
-          Get-FileHash out/x64/kxgdi.dll, out/x64/kxgdi-test.exe, dist/kxgdi-win7-x64.zip -Algorithm SHA256 |
+          Get-FileHash out/x64/kxgdi.dll, out/x64/kxgdildr.dll, dist/kxgdi-win7-x64.zip -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
             Tee-Object dist/SHA256SUMS.txt
 

@@ -16,12 +16,21 @@ $stage = Join-Path $root 'dist\kxgdi-win7-x64'
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force $stage | Out-Null
 
-Copy-Item "$root\out\x64\kxgdi.dll"             $stage
-Copy-Item "$root\out\x64\kxgdi-test.exe"        $stage
-Copy-Item "$root\install\Install-KxGdi.ps1"     $stage
-Copy-Item "$root\README.md"                     $stage
-Copy-Item "$root\README.de.md"                  $stage
-Copy-Item "$root\LICENSE"                       $stage
+$files = @(
+    'out\x64\kxgdi.dll',
+    'out\x64\kxgdildr.dll',
+    'out\x64\kxgdi-test.exe',
+    'out\x64\kxgdi-ldrtest.exe',
+    'out\x64\kxgdi-ldrtest-static.dll',
+    'out\x64\kxgdi-ldrtest-dynamic.dll',
+    'install\Install-KxGdi.ps1',
+    'test\Test-Loader.ps1',
+    'README.md',
+    'README.de.md',
+    'CHANGELOG.md',
+    'LICENSE'
+)
+foreach ($f in $files) { Copy-Item (Join-Path $root $f) $stage }
 
 $zip = Join-Path $root 'dist\kxgdi-win7-x64.zip'
 if (Test-Path $zip) { Remove-Item $zip -Force }

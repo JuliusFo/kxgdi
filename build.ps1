@@ -1,13 +1,21 @@
 <#
 .SYNOPSIS
-    Builds kxgdi.dll (x64) and kxgdi-test.exe without the Windows SDK.
+    Builds kxgdi.dll, kxgdildr.dll and the tests (x64) without the Windows SDK.
 
 .DESCRIPTION
     Only needs the MSVC compiler tools (cl, link, lib) from Visual Studio /
-    Build Tools. Import libraries for kernel32 and gdi32 are generated from
-    imports\*.def, and the code uses no SDK headers and no C runtime.
+    Build Tools. Import libraries for kernel32, gdi32 and ntdll are generated
+    from imports\*.def, and the code uses no SDK headers and no C runtime.
 
-    Output: out\x64\kxgdi.dll, out\x64\kxgdi-test.exe
+    Output in out\x64:
+      kxgdi.dll                    gdi32 extension
+      kxgdildr.dll                 standalone loader (verifier provider)
+      kxgdi-test.exe               self-test of kxgdi.dll
+      kxgdildr-unit.exe            unit test of the import rewriting
+      kxgdi-ldrtest.exe (+ DLLs)   end-to-end loader test (needs Test-Loader.ps1)
+
+    -Test runs kxgdi-test.exe and kxgdildr-unit.exe; when running as
+    administrator it also runs the end-to-end loader test.
 #>
 param(
     [switch] $RegenerateDef,
@@ -42,35 +50,67 @@ function Invoke-Tool($exe, [string[]] $toolArgs) {
     if ($LASTEXITCODE -ne 0) { throw "$(Split-Path $exe -Leaf) failed with exit code $LASTEXITCODE" }
 }
 
+function Compile([string] $name, [string] $source) {
+    Invoke-Tool $cl ($cflags + @("/Fo$obj\$name.obj", "/Fd$obj\$name.pdb", $source))
+}
+
+function Link([string] $name, [string] $output, [string[]] $extra) {
+    Invoke-Tool $link ($lflags + $extra + @("/OUT:$out\$output", "/PDB:$out\$name.pdb", "$obj\$name.obj"))
+}
+
 # Import libraries from .def files
-foreach ($d in 'kernel32', 'gdi32') {
+foreach ($d in 'kernel32', 'gdi32', 'ntdll') {
     Invoke-Tool $lib @('/nologo', "/def:$root\imports\$d.def", '/machine:x64', "/out:$obj\$d.lib")
 }
 
-# Common flags: no CRT, no stack cookies, no SDK headers
+# Common flags: no CRT, no stack cookies, no SDK headers. Subsystem 6.01 = loadable on Windows 7.
 $cflags = @('/nologo', '/c', '/O2', '/W4', '/WX', '/GS-', '/Gs1000000', '/Zl', '/Zi')
 $lflags = @('/nologo', '/NODEFAULTLIB', '/MACHINE:X64', '/DEBUG', '/OPT:REF', '/OPT:ICF',
-            '/DYNAMICBASE', '/NXCOMPAT', "/LIBPATH:$obj", 'kernel32.lib', 'gdi32.lib')
+            '/DYNAMICBASE', '/NXCOMPAT', "/LIBPATH:$obj", "/LIBPATH:$out")
+$dll = @('/DLL', '/ENTRY:DllMain', '/SUBSYSTEM:WINDOWS,6.01')
+$exe = @('/ENTRY:TestMain', '/SUBSYSTEM:CONSOLE,6.01')
 
-# kxgdi.dll  (subsystem 6.01 = loadable on Windows 7)
-Invoke-Tool $cl ($cflags + @("/Fo$obj\kxgdi.obj", "/Fd$obj\kxgdi.pdb", "$root\src\kxgdi.c"))
-Invoke-Tool $link ($lflags + @('/DLL', '/ENTRY:DllMain', '/SUBSYSTEM:WINDOWS,6.01',
-    "/DEF:$root\src\kxgdi.def", "/OUT:$out\kxgdi.dll", "/PDB:$out\kxgdi.pdb", "$obj\kxgdi.obj"))
+# kxgdi.dll
+Compile 'kxgdi' "$root\src\kxgdi.c"
+Link 'kxgdi' 'kxgdi.dll' ($dll + @("/DEF:$root\src\kxgdi.def", 'kernel32.lib', 'gdi32.lib'))
 
-# kxgdi-test.exe
-Invoke-Tool $cl ($cflags + @("/Fo$obj\test.obj", "/Fd$obj\test.pdb", "$root\test\test.c"))
-Invoke-Tool $link ($lflags + @('/ENTRY:TestMain', '/SUBSYSTEM:CONSOLE,6.01',
-    "/OUT:$out\kxgdi-test.exe", "/PDB:$out\kxgdi-test.pdb", "$obj\test.obj"))
+# kxgdildr.dll (ntdll only: it runs before kernel32 is initialized)
+Compile 'kxgdildr' "$root\src\kxgdildr.c"
+Link 'kxgdildr' 'kxgdildr.dll' ($dll + @('ntdll.lib'))
 
-Write-Host "Built $out\kxgdi.dll and $out\kxgdi-test.exe"
+# Tests
+Compile 'test' "$root\test\test.c"
+Link 'test' 'kxgdi-test.exe' ($exe + @('kernel32.lib', 'gdi32.lib'))
+
+Compile 'ldrtest-dll' "$root\test\ldrtest-dll.c"
+Link 'ldrtest-dll' 'kxgdi-ldrtest-static.dll' ($dll + @('gdi32.lib', "/IMPLIB:$obj\kxgdi-ldrtest-static.lib"))
+Link 'ldrtest-dll' 'kxgdi-ldrtest-dynamic.dll' ($dll + @('gdi32.lib', "/IMPLIB:$obj\kxgdi-ldrtest-dynamic.lib"))
+
+Compile 'ldrtest' "$root\test\ldrtest.c"
+Link 'ldrtest' 'kxgdi-ldrtest.exe' ($exe + @('kernel32.lib', 'gdi32.lib', 'ntdll.lib', 'kxgdi-ldrtest-static.lib'))
+
+Compile 'ldrunit' "$root\test\ldrunit.c"
+Link 'ldrunit' 'kxgdildr-unit.exe' ($exe + @('kernel32.lib', 'ntdll.lib'))
+
+Write-Host "Built kxgdi.dll, kxgdildr.dll and tests in $out"
 
 if ($Test) {
     Push-Location $out
     try {
         if ($CI) { & .\kxgdi-test.exe /ci } else { & .\kxgdi-test.exe }
-        $code = $LASTEXITCODE
+        if ($LASTEXITCODE -ne 0) { throw "kxgdi-test.exe reported $LASTEXITCODE failed check(s)" }
+
+        & .\kxgdildr-unit.exe
+        if ($LASTEXITCODE -ne 0) { throw "kxgdildr-unit.exe reported $LASTEXITCODE failed check(s)" }
     } finally {
         Pop-Location
     }
-    if ($code -ne 0) { throw "kxgdi-test.exe reported $code failed check(s)" }
+
+    $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        & "$root\test\Test-Loader.ps1" -Dir $out
+        if ($LASTEXITCODE -ne 0) { throw "loader test failed" }
+    } else {
+        Write-Host 'Skipping the end-to-end loader test (needs administrator rights: test\Test-Loader.ps1).'
+    }
 }
