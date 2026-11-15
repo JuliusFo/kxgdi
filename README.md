@@ -22,8 +22,9 @@ point D3DKMTOpenAdapterFromLuid could not be located in the dynamic link library
 
 ## Status
 
-- ✅ Built and tested on Windows 11: `kxgdi-test.exe` (both lookup strategies find the adapter, results
-  match the native Windows implementation) and the unit test of the loader's import rewriting.
+- ✅ Built and tested on Windows 11: `kxgdi-test.exe` (both lookup strategies find the adapter, every
+  status code matches the native Windows implementation, including invalid pointers; no handle leaks)
+  and the unit test of the loader's import rewriting.
 - ✅ The end-to-end loader test (`Test-Loader.ps1`) runs on every build on GitHub Actions (Windows Server).
   It covers the game's own imports there. Rewriting the imports of DLLs and switching off Application
   Verifier only happen on Windows 7 and can only be checked there.
@@ -76,7 +77,8 @@ point D3DKMTOpenAdapterFromLuid could not be located in the dynamic link library
    installs on Windows 7 (newer Windows versions have the function natively).
 
 6. **Watch the log (optional but helpful):** start Sysinternals **DebugView**. You will see `KxGdiLdr:`
-   lines from the loader and `KxGdi:` lines for every call of the function. The loader also writes its
+   lines from the loader and a `KxGdi:` line when the function finds an adapter for the first time
+   (later calls are answered from a cache without output) or fails. The loader also writes its
    log to `C:\Windows\Temp\kxgdildr-<program>.log` (e.g. `kxgdildr-PathOfExile.tmp.log`), even if the
    game does not start. Please attach it to bug reports.
 
@@ -123,7 +125,12 @@ command plus `-Uninstall`.
 - **kxgdi.dll:** implements the missing functions and forwards everything else to `gdi32.dll`. The
   forwarder list was generated from the Windows 11 `gdi32.dll` (995 names). Forwarders to names that
   do not exist on Windows 7 are harmless: they only fail if a program imports exactly that function,
-  which would fail without kxgdi as well.
+  which would fail without kxgdi as well. The other way round, a function that only exists in the
+  Windows 7 `gdi32.dll` would be missing; none is known (a sample of old names was checked). With a
+  `gdi32.dll` from Windows 7, `tools\gen-def.ps1 -Gdi32 <Windows 11 file>, <Windows 7 file>` closes this
+  gap. Exports without a name (ordinal only, internal to Windows) are not forwarded.
+- **Performance:** the first call for an adapter enumerates all adapters; the result is cached, so
+  later calls open only that one adapter.
 
 ## Building
 

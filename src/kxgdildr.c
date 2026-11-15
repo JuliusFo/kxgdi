@@ -22,13 +22,15 @@
 #include "kxtypes.h"
 
 //
-// No C runtime: the compiler may still emit calls to memset/memcpy.
+// No C runtime: the compiler may still emit calls to memset/memcpy. The
+// volatile pointers keep the optimizer from turning these loops back into
+// calls to memset/memcpy (which would call themselves forever).
 //
 
 #pragma function(memset)
 void *memset(void *Dest, int Value, SIZE_T Count)
 {
-	BYTE *D = (BYTE *) Dest;
+	volatile BYTE *D = (volatile BYTE *) Dest;
 	while (Count--) *D++ = (BYTE) Value;
 	return Dest;
 }
@@ -36,7 +38,7 @@ void *memset(void *Dest, int Value, SIZE_T Count)
 #pragma function(memcpy)
 void *memcpy(void *Dest, const void *Src, SIZE_T Count)
 {
-	BYTE *D = (BYTE *) Dest;
+	volatile BYTE *D = (volatile BYTE *) Dest;
 	const BYTE *S = (const BYTE *) Src;
 	while (Count--) *D++ = *S++;
 	return Dest;

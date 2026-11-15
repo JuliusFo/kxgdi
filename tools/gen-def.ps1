@@ -35,20 +35,40 @@ if (-not $Dumpbin) {
     $Dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" |
         Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
 }
+if (-not $Dumpbin -or -not (Test-Path $Dumpbin)) { throw "dumpbin.exe not found (pass -Dumpbin)" }
 
 $names = New-Object 'System.Collections.Generic.SortedSet[string]' ([StringComparer]::Ordinal)
 
 foreach ($dll in $Gdi32) {
-    $out = & $Dumpbin /exports $dll
+    if (-not (Test-Path $dll)) { throw "$dll not found" }
+    $out = & $Dumpbin /nologo /exports $dll
+    if ($LASTEXITCODE -ne 0) { throw "dumpbin failed for $dll (exit code $LASTEXITCODE)" }
+
     $count = 0
+    $noName = 0
     foreach ($line in $out) {
         # "  ordinal hint RVA      name"  or forwarded: "  ordinal hint          name (forwarded to ...)"
         if ($line -match '^\s+\d+\s+[0-9A-F]+\s+(?:[0-9A-F]{8}\s+)?([A-Za-z_][A-Za-z0-9_@?$]*)(\s+\(forwarded to .*\))?\s*$') {
             [void] $names.Add($Matches[1])
             $count++
+        } elseif ($line -match '\[NONAME\]') {
+            $noName++
         }
     }
+
+    # Every gdi32.dll since Windows 7 has several hundred named exports; far
+    # fewer means a wrong file or unexpected dumpbin output, and the .def files
+    # would be incomplete. Nothing has been written at this point.
+    if ($count -lt 500) { throw "$dll : only $count named exports found - not a gdi32.dll, or unexpected dumpbin output" }
     Write-Host "$dll : $count named exports"
+
+    # Exports without a name can only be imported by ordinal. They are internal
+    # to Windows (Windows 11 has a few in gdi32), and their ordinals differ
+    # between Windows versions, so forwarding them could even reach the wrong
+    # function on Windows 7. They are skipped on purpose.
+    if ($noName -gt 0) {
+        Write-Warning "$dll : $noName exports without a name (ordinal only) are not forwarded"
+    }
 }
 
 $root = Split-Path $PSScriptRoot -Parent

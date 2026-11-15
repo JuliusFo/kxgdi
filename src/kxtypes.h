@@ -48,7 +48,9 @@ typedef const CHAR			*PCSTR;
 #define DLL_PROCESS_ATTACH		1
 #define DLL_PROCESS_VERIFIER	4
 
+#define PAGE_READONLY			0x02
 #define PAGE_READWRITE			0x04
+#define PAGE_EXECUTE_READ		0x20
 #define NtCurrentProcess()		((HANDLE) (LONG_PTR) -1)
 typedef __int64					LONG_PTR;
 

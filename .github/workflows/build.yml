@@ -5,8 +5,8 @@ name: build
 # Releases: run this workflow manually (Actions -> build -> Run workflow) with a
 # version such as v0.1.0. It creates a *draft* pre-release with the zip and
 # checksums, using the matching section of CHANGELOG.md as release notes.
-# Drafts are only visible to the repository owner; the tag is created when the
-# draft is published on GitHub.
+# Drafts are only visible to people with write access to the repository; the
+# tag is created when the draft is published on GitHub.
 
 on:
   push:

@@ -54,8 +54,11 @@ function Compile([string] $name, [string] $source) {
     Invoke-Tool $cl ($cflags + @("/Fo$obj\$name.obj", "/Fd$obj\$name.pdb", $source))
 }
 
+# The PDB is named after the output file, so one object file can be linked
+# into several outputs without them overwriting each other's symbols.
 function Link([string] $name, [string] $output, [string[]] $extra) {
-    Invoke-Tool $link ($lflags + $extra + @("/OUT:$out\$output", "/PDB:$out\$name.pdb", "$obj\$name.obj"))
+    $pdb = [IO.Path]::ChangeExtension($output, '.pdb')
+    Invoke-Tool $link ($lflags + $extra + @("/OUT:$out\$output", "/PDB:$out\$pdb", "$obj\$name.obj"))
 }
 
 # Import libraries from .def files
@@ -72,7 +75,7 @@ $exe = @('/ENTRY:TestMain', '/SUBSYSTEM:CONSOLE,6.01')
 
 # kxgdi.dll
 Compile 'kxgdi' "$root\src\kxgdi.c"
-Link 'kxgdi' 'kxgdi.dll' ($dll + @("/DEF:$root\src\kxgdi.def", 'kernel32.lib', 'gdi32.lib'))
+Link 'kxgdi' 'kxgdi.dll' ($dll + @("/DEF:$root\src\kxgdi.def", 'kernel32.lib', 'gdi32.lib', 'ntdll.lib'))
 
 # kxgdildr.dll (ntdll only: it runs before kernel32 is initialized)
 Compile 'kxgdildr' "$root\src\kxgdildr.c"
@@ -80,7 +83,7 @@ Link 'kxgdildr' 'kxgdildr.dll' ($dll + @('ntdll.lib'))
 
 # Tests
 Compile 'test' "$root\test\test.c"
-Link 'test' 'kxgdi-test.exe' ($exe + @('kernel32.lib', 'gdi32.lib'))
+Link 'test' 'kxgdi-test.exe' ($exe + @('kernel32.lib', 'gdi32.lib', 'ntdll.lib'))
 
 Compile 'ldrtest-dll' "$root\test\ldrtest-dll.c"
 Link 'ldrtest-dll' 'kxgdi-ldrtest-static.dll' ($dll + @('gdi32.lib', "/IMPLIB:$obj\kxgdi-ldrtest-static.lib"))

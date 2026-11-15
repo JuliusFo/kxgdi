@@ -13,6 +13,16 @@
   start) and printed to DebugView by kxgdi.dll (`KxGdiLdr:` lines).
 - The installer only installs on Windows 7, accepts relative paths and differently spelled paths, and
   keeps VxKex's `KexDll.dll` first in `VerifierDlls`.
+- `D3DKMTOpenAdapterFromLuid` caches which adapter belongs to a LUID: only the first call enumerates all
+  adapters, later calls open just that one. It now writes debug output only for the first lookup per
+  adapter and for failures (at most 16), and returns `STATUS_INVALID_PARAMETER` for an invalid pointer
+  instead of crashing, like Windows 8+.
+- `kxgdi-test.exe` compares every status code exactly with the native Windows 8+ function, tests the
+  cache, invalid pointers and handle leaks. The loader unit test checks that page protections are
+  restored.
+- The loader log is printed to DebugView line by line, so long logs are no longer cut off.
+- `tools\gen-def.ps1` stops instead of writing incomplete `.def` files when `dumpbin` fails or the
+  input is not a `gdi32.dll`.
 
 **Not yet confirmed on Windows 7.** Please run `Test-Loader.ps1` and `kxgdi-test.exe` and report the
 result in an issue.

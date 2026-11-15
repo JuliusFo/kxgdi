@@ -6,7 +6,7 @@
 //
 // Abstract:
 //
-//     VxKex extension DLL for gdi32.dll.
+//     Extension DLL for gdi32.dll.
 //
 //     All gdi32 exports are forwarded to the real gdi32.dll (see kxgdi.def).
 //     Functions that do not exist on Windows 7 are implemented here on top of
@@ -18,26 +18,40 @@
 //         Emulated by enumerating all display adapters, opening each one with
 //         D3DKMTOpenAdapterFromDeviceName / D3DKMTOpenAdapterFromGdiDisplayName
 //         (both available since Vista) and returning the handle whose LUID
-//         matches. Non-matching handles are closed again.
+//         matches. Non-matching handles are closed again. The name of the
+//         matching adapter is cached, so later calls for the same LUID open
+//         only that adapter.
 //
-//     Usage with VxKex 1.2.0 or later: copy kxgdi.dll into KexDir\Kex64 and
-//     set the IFEO value KEX_DllRewriteEntries to "gdi32:kxgdi" for the
-//     program. The replacement name must not be longer than the original
-//     name ("kxgdi" and "gdi32" are both 5 characters), because VxKex rewrites
-//     import names in place.
+//     How programs get here (they import gdi32.dll, not kxgdi.dll):
 //
-//     kxgdi.dll MUST live in KexDir\Kex64 (or Kex32). VxKex does not rewrite
-//     imports of DLLs inside KexDir, so our own import of gdi32 reaches the
-//     real gdi32.dll. Anywhere else, VxKex would rewrite kxgdi's own gdi32
-//     import to kxgdi itself.
+//       - Standalone loader (kxgdildr.dll, default): renames the program's
+//         gdi32 imports to kxgdi in memory. kxgdi.dll lives in System32; the
+//         loader leaves DLLs in the Windows folder alone, so our own gdi32
+//         import reaches the real gdi32.dll.
+//
+//       - i486/VxKex 1.2.0+: IFEO value KEX_DllRewriteEntries = "gdi32:kxgdi",
+//         kxgdi.dll in KexDir\Kex64. VxKex does not rewrite imports of DLLs in
+//         KexDir, for the same reason.
+//
+//     Both rewrite import names in place, so the replacement name must not
+//     be longer than the original ("kxgdi" and "gdi32" are both 5 characters).
 //
 //     This file deliberately uses no Windows SDK headers and no C runtime, so
 //     it can be built with nothing more than cl.exe, link.exe and lib.exe.
 //
-// Debug output:
+// Debug output (OutputDebugStringW, prefix "KxGdi:", e.g. Sysinternals DebugView):
 //
-//     Every call to an emulated function is reported via OutputDebugStringW
-//     with the prefix "KxGdi:". Use Sysinternals DebugView to watch it.
+//     - the loader log of kxgdildr.dll, when it loaded us;
+//     - every lookup that had to enumerate the adapters (normally once per
+//       adapter; later calls are answered from the cache without output);
+//     - failed calls, up to KXGDI_MAX_FAILURE_LOGS times.
+//
+// Loader lock:
+//
+//     The first call for a LUID loads setupapi.dll and enumerates devices.
+//     Calling D3DKMTOpenAdapterFromLuid from DllMain or a TLS callback of
+//     another DLL is therefore not recommended (it is not on Windows 8+
+//     either, where the function calls into the kernel).
 //
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -187,6 +201,13 @@ __declspec(dllimport) PVOID		WINAPI HeapAlloc(HANDLE Heap, DWORD Flags, SIZE_T B
 __declspec(dllimport) BOOL		WINAPI HeapFree(HANDLE Heap, DWORD Flags, PVOID Mem);
 __declspec(dllimport) void		WINAPI OutputDebugStringW(PCWSTR OutputString);
 __declspec(dllimport) HMODULE	WINAPI GetModuleHandleW(PCWSTR ModuleName);
+__declspec(dllimport) void		WINAPI AcquireSRWLockExclusive(PVOID *SRWLock);
+__declspec(dllimport) void		WINAPI ReleaseSRWLockExclusive(PVOID *SRWLock);
+
+long _InterlockedIncrement(long volatile *Addend);
+#pragma intrinsic(_InterlockedIncrement)
+
+#define EXCEPTION_EXECUTE_HANDLER	1
 
 typedef PCWSTR (*PFN_KXGDILDRGETLOG)(void);
 
@@ -292,23 +313,84 @@ static void CloseKmtAdapter(D3DKMT_HANDLE Adapter)
 	D3DKMTCloseAdapter(&CloseArgs);
 }
 
+// Copies Source into Dest if it fits (including the terminator).
+static BOOL CopyName(PWSTR Dest, UINT DestCch, PCWSTR Source)
+{
+	UINT Length = 0;
+
+	if (!Dest) return FALSE;
+	while (Source[Length]) ++Length;
+	if (Length >= DestCch) return FALSE;
+
+	memcpy(Dest, Source, (Length + 1) * sizeof(WCHAR));
+	return TRUE;
+}
+
+//
+// setupapi / user32 functions, resolved once on first use.
+//
+// No lock: LoadLibraryW must not be called while holding our own lock (a
+// thread holding the loader lock may be waiting for that lock). If two threads
+// race here, both store the same pointers and the module reference count is
+// just one higher.
+//
+
+static PFN_SETUPDIGETCLASSDEVSW				pSetupDiGetClassDevsW;
+static PFN_SETUPDIENUMDEVICEINTERFACES		pSetupDiEnumDeviceInterfaces;
+static PFN_SETUPDIGETDEVICEINTERFACEDETAILW	pSetupDiGetDeviceInterfaceDetailW;
+static PFN_SETUPDIDESTROYDEVICEINFOLIST		pSetupDiDestroyDeviceInfoList;
+static PFN_ENUMDISPLAYDEVICESW				pEnumDisplayDevicesW;
+static volatile LONG						ApisResolved;
+
+static void ResolveApis(void)
+{
+	HMODULE SetupApi;
+	HMODULE User32;
+
+	if (ApisResolved) {
+		return;
+	}
+
+	SetupApi = LoadLibraryW(L"setupapi.dll");
+	if (SetupApi) {
+		pSetupDiGetClassDevsW = (PFN_SETUPDIGETCLASSDEVSW)
+			GetProcAddress(SetupApi, "SetupDiGetClassDevsW");
+		pSetupDiEnumDeviceInterfaces = (PFN_SETUPDIENUMDEVICEINTERFACES)
+			GetProcAddress(SetupApi, "SetupDiEnumDeviceInterfaces");
+		pSetupDiGetDeviceInterfaceDetailW = (PFN_SETUPDIGETDEVICEINTERFACEDETAILW)
+			GetProcAddress(SetupApi, "SetupDiGetDeviceInterfaceDetailW");
+		pSetupDiDestroyDeviceInfoList = (PFN_SETUPDIDESTROYDEVICEINFOLIST)
+			GetProcAddress(SetupApi, "SetupDiDestroyDeviceInfoList");
+	}
+
+	User32 = LoadLibraryW(L"user32.dll");
+	if (User32) {
+		pEnumDisplayDevicesW = (PFN_ENUMDISPLAYDEVICESW)
+			GetProcAddress(User32, "EnumDisplayDevicesW");
+	}
+
+	// Both modules stay loaded for the lifetime of the process. Published
+	// last, so other threads only see a complete set of pointers (volatile
+	// stores have release semantics with MSVC on x86/x64).
+	ApisResolved = 1;
+}
+
 //
 // Strategy 1: enumerate display adapter device interfaces via SetupAPI and
 // open each one with D3DKMTOpenAdapterFromDeviceName. This also finds adapters
 // without an active display output (e.g. render-only GPUs in laptops).
 //
-// Returns TRUE and stores the handle in *Adapter if a matching adapter was found.
+// Returns TRUE and stores the handle in *Adapter if a matching adapter was
+// found. If Name is not NULL, the device path is copied there (empty string if
+// it does not fit).
 //
 
 static BOOL OpenAdapterByLuidFromDeviceInterfaces(
 	LUID			Luid,
-	D3DKMT_HANDLE	*Adapter)
+	D3DKMT_HANDLE	*Adapter,
+	PWSTR			Name,
+	UINT			NameCch)
 {
-	HMODULE SetupApi;
-	PFN_SETUPDIGETCLASSDEVSW pSetupDiGetClassDevsW;
-	PFN_SETUPDIENUMDEVICEINTERFACES pSetupDiEnumDeviceInterfaces;
-	PFN_SETUPDIGETDEVICEINTERFACEDETAILW pSetupDiGetDeviceInterfaceDetailW;
-	PFN_SETUPDIDESTROYDEVICEINFOLIST pSetupDiDestroyDeviceInfoList;
 	HANDLE DevInfo;
 	HANDLE Heap;
 	DWORD Index;
@@ -316,19 +398,7 @@ static BOOL OpenAdapterByLuidFromDeviceInterfaces(
 
 	Found = FALSE;
 
-	SetupApi = LoadLibraryW(L"setupapi.dll");
-	if (!SetupApi) {
-		return FALSE;
-	}
-
-	pSetupDiGetClassDevsW = (PFN_SETUPDIGETCLASSDEVSW)
-		GetProcAddress(SetupApi, "SetupDiGetClassDevsW");
-	pSetupDiEnumDeviceInterfaces = (PFN_SETUPDIENUMDEVICEINTERFACES)
-		GetProcAddress(SetupApi, "SetupDiEnumDeviceInterfaces");
-	pSetupDiGetDeviceInterfaceDetailW = (PFN_SETUPDIGETDEVICEINTERFACEDETAILW)
-		GetProcAddress(SetupApi, "SetupDiGetDeviceInterfaceDetailW");
-	pSetupDiDestroyDeviceInfoList = (PFN_SETUPDIDESTROYDEVICEINFOLIST)
-		GetProcAddress(SetupApi, "SetupDiDestroyDeviceInfoList");
+	ResolveApis();
 
 	if (!pSetupDiGetClassDevsW || !pSetupDiEnumDeviceInterfaces ||
 		!pSetupDiGetDeviceInterfaceDetailW || !pSetupDiDestroyDeviceInfoList) {
@@ -392,6 +462,7 @@ static BOOL OpenAdapterByLuidFromDeviceInterfaces(
 				if (LuidEqual(OpenArgs.AdapterLuid, Luid)) {
 					*Adapter = OpenArgs.hAdapter;
 					Found = TRUE;
+					if (Name && !CopyName(Name, NameCch, OpenArgs.pDeviceName)) Name[0] = 0;
 				} else {
 					CloseKmtAdapter(OpenArgs.hAdapter);
 				}
@@ -402,8 +473,6 @@ static BOOL OpenAdapterByLuidFromDeviceInterfaces(
 	}
 
 	pSetupDiDestroyDeviceInfoList(DevInfo);
-
-	// setupapi.dll stays loaded on purpose (cheap, and avoids reload costs).
 	return Found;
 }
 
@@ -415,19 +484,13 @@ static BOOL OpenAdapterByLuidFromDeviceInterfaces(
 
 static BOOL OpenAdapterByLuidFromGdiDisplayNames(
 	LUID			Luid,
-	D3DKMT_HANDLE	*Adapter)
+	D3DKMT_HANDLE	*Adapter,
+	PWSTR			Name,
+	UINT			NameCch)
 {
-	HMODULE User32;
-	PFN_ENUMDISPLAYDEVICESW pEnumDisplayDevicesW;
 	DWORD Index;
 
-	User32 = LoadLibraryW(L"user32.dll");
-	if (!User32) {
-		return FALSE;
-	}
-
-	pEnumDisplayDevicesW = (PFN_ENUMDISPLAYDEVICESW)
-		GetProcAddress(User32, "EnumDisplayDevicesW");
+	ResolveApis();
 
 	if (!pEnumDisplayDevicesW) {
 		return FALSE;
@@ -460,6 +523,7 @@ static BOOL OpenAdapterByLuidFromGdiDisplayNames(
 
 		if (LuidEqual(OpenArgs.AdapterLuid, Luid)) {
 			*Adapter = OpenArgs.hAdapter;
+			if (Name && !CopyName(Name, NameCch, OpenArgs.DeviceName)) Name[0] = 0;
 			return TRUE;
 		}
 
@@ -470,55 +534,259 @@ static BOOL OpenAdapterByLuidFromGdiDisplayNames(
 }
 
 //
+// Cache: LUID -> how the adapter was found last time (device path or GDI
+// display name). A hit opens only that one adapter and checks its LUID; a
+// stale entry (adapter removed, driver restarted) falls back to the full
+// enumeration. The lock is only held while copying entries.
+//
+
+#define ADAPTER_KIND_NONE			0
+#define ADAPTER_KIND_DEVICE_PATH	1
+#define ADAPTER_KIND_GDI_NAME		2
+
+#define ADAPTER_CACHE_ENTRIES		8
+#define ADAPTER_NAME_CCH			260
+
+typedef struct _ADAPTER_CACHE_ENTRY {
+	LUID	Luid;
+	UINT	Kind;
+	WCHAR	Name[ADAPTER_NAME_CCH];
+} ADAPTER_CACHE_ENTRY;
+
+static ADAPTER_CACHE_ENTRY	AdapterCache[ADAPTER_CACHE_ENTRIES];
+static UINT					AdapterCacheNext;
+static PVOID				AdapterCacheLock;	// SRWLOCK, statically initialized (zero)
+
+// Returns the kind of the cached entry for Luid and copies its name to Name
+// (ADAPTER_NAME_CCH characters), or ADAPTER_KIND_NONE.
+static UINT CacheLookup(LUID Luid, PWSTR Name)
+{
+	UINT Kind = ADAPTER_KIND_NONE;
+	UINT Index;
+
+	AcquireSRWLockExclusive(&AdapterCacheLock);
+
+	for (Index = 0; Index < ADAPTER_CACHE_ENTRIES; ++Index) {
+		if (AdapterCache[Index].Kind != ADAPTER_KIND_NONE && LuidEqual(AdapterCache[Index].Luid, Luid)) {
+			Kind = AdapterCache[Index].Kind;
+			memcpy(Name, AdapterCache[Index].Name, sizeof(AdapterCache[Index].Name));
+			break;
+		}
+	}
+
+	ReleaseSRWLockExclusive(&AdapterCacheLock);
+	return Kind;
+}
+
+// Stores or replaces the entry for Luid. Kind == ADAPTER_KIND_NONE removes it.
+static void CacheStore(LUID Luid, UINT Kind, PCWSTR Name)
+{
+	UINT Index;
+
+	AcquireSRWLockExclusive(&AdapterCacheLock);
+
+	for (Index = 0; Index < ADAPTER_CACHE_ENTRIES; ++Index) {
+		if (AdapterCache[Index].Kind != ADAPTER_KIND_NONE && LuidEqual(AdapterCache[Index].Luid, Luid)) {
+			break;
+		}
+	}
+
+	if (Index == ADAPTER_CACHE_ENTRIES && Kind != ADAPTER_KIND_NONE) {
+		Index = AdapterCacheNext;
+		AdapterCacheNext = (AdapterCacheNext + 1) % ADAPTER_CACHE_ENTRIES;
+	}
+
+	if (Index < ADAPTER_CACHE_ENTRIES) {
+		AdapterCache[Index].Luid = Luid;
+		AdapterCache[Index].Kind = Kind;
+		if (Kind == ADAPTER_KIND_NONE || !CopyName(AdapterCache[Index].Name, ADAPTER_NAME_CCH, Name)) {
+			AdapterCache[Index].Kind = ADAPTER_KIND_NONE;
+			AdapterCache[Index].Name[0] = 0;
+		}
+	}
+
+	ReleaseSRWLockExclusive(&AdapterCacheLock);
+}
+
+// Opens the adapter a cache entry points to; TRUE only if its LUID still matches.
+static BOOL OpenCachedAdapter(LUID Luid, UINT Kind, PCWSTR Name, D3DKMT_HANDLE *Adapter)
+{
+	NTSTATUS Status;
+	D3DKMT_HANDLE Handle;
+	LUID Found;
+
+	if (Kind == ADAPTER_KIND_DEVICE_PATH) {
+		D3DKMT_OPENADAPTERFROMDEVICENAME OpenArgs;
+
+		memset(&OpenArgs, 0, sizeof(OpenArgs));
+		OpenArgs.pDeviceName = Name;
+		Status = D3DKMTOpenAdapterFromDeviceName(&OpenArgs);
+		Handle = OpenArgs.hAdapter;
+		Found = OpenArgs.AdapterLuid;
+	} else if (Kind == ADAPTER_KIND_GDI_NAME) {
+		D3DKMT_OPENADAPTERFROMGDIDISPLAYNAME OpenArgs;
+
+		memset(&OpenArgs, 0, sizeof(OpenArgs));
+		if (!CopyName(OpenArgs.DeviceName, 32, Name)) return FALSE;
+		Status = D3DKMTOpenAdapterFromGdiDisplayName(&OpenArgs);
+		Handle = OpenArgs.hAdapter;
+		Found = OpenArgs.AdapterLuid;
+	} else {
+		return FALSE;
+	}
+
+	if (!NT_SUCCESS(Status)) {
+		return FALSE;
+	}
+
+	if (!LuidEqual(Found, Luid)) {
+		CloseKmtAdapter(Handle);
+		return FALSE;
+	}
+
+	*Adapter = Handle;
+	return TRUE;
+}
+
+//
+// Failures are logged only a limited number of times, so a program that keeps
+// asking for a missing adapter does not flood the debug output.
+//
+
+#define KXGDI_MAX_FAILURE_LOGS 16
+
+static volatile long FailureLogs;
+
+static void LogFailure(LOG_BUFFER *Log)
+{
+	long Count = _InterlockedIncrement(&FailureLogs);
+
+	if (Count <= KXGDI_MAX_FAILURE_LOGS) {
+		if (Count == KXGDI_MAX_FAILURE_LOGS) {
+			LogAppend(Log, L" (further failures are not logged)");
+		}
+
+		LogFlush(Log);
+	}
+}
+
+//
 // Exported: NTSTATUS APIENTRY D3DKMTOpenAdapterFromLuid(
 //               const D3DKMT_OPENADAPTERFROMLUID *unnamedParam1);
 //
 // (The SDK declares the parameter const, but hAdapter is an output.)
+//
+// Like the Windows 8+ implementation (which probes the buffer in the kernel),
+// an invalid pointer returns STATUS_INVALID_PARAMETER instead of crashing.
 //
 
 NTSTATUS WINAPI Ext_D3DKMTOpenAdapterFromLuid(
 	D3DKMT_OPENADAPTERFROMLUID *Args)
 {
 	LOG_BUFFER Log;
+	LUID Luid;
 	D3DKMT_HANDLE Adapter;
 	PCWSTR Method;
+	UINT Kind;
+	WCHAR Name[ADAPTER_NAME_CCH];
+	BOOL Stored;
 
 	Log.Length = 0;
 	LogAppend(&Log, L"KxGdi: D3DKMTOpenAdapterFromLuid(");
 
-	if (!Args) {
-		LogAppend(&Log, L"NULL) -> STATUS_INVALID_PARAMETER");
-		LogFlush(&Log);
+	__try {
+		Luid = Args->AdapterLuid;
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		LogAppend(&Log, L"invalid pointer) -> STATUS_INVALID_PARAMETER");
+		LogFailure(&Log);
 		return STATUS_INVALID_PARAMETER;
 	}
 
-	LogAppendLuid(&Log, Args->AdapterLuid);
+	LogAppendLuid(&Log, Luid);
 	LogAppend(&Log, L") -> ");
 
 	Adapter = 0;
-	Method = NULL;
 
-	if (OpenAdapterByLuidFromDeviceInterfaces(Args->AdapterLuid, &Adapter)) {
-		Method = L"device interface";
-	} else if (OpenAdapterByLuidFromGdiDisplayNames(Args->AdapterLuid, &Adapter)) {
-		Method = L"GDI display name";
+	//
+	// Fast path: the adapter that had this LUID last time (no output).
+	//
+
+	Kind = CacheLookup(Luid, Name);
+
+	if (Kind != ADAPTER_KIND_NONE && !OpenCachedAdapter(Luid, Kind, Name, &Adapter)) {
+		CacheStore(Luid, ADAPTER_KIND_NONE, NULL);
+		Kind = ADAPTER_KIND_NONE;
 	}
 
-	if (!Method) {
-		LogAppend(&Log, L"no adapter with this LUID, STATUS_INVALID_PARAMETER");
+	//
+	// Slow path: enumerate all adapters.
+	//
+
+	if (Kind == ADAPTER_KIND_NONE) {
+		Name[0] = 0;
+
+		if (OpenAdapterByLuidFromDeviceInterfaces(Luid, &Adapter, Name, ADAPTER_NAME_CCH)) {
+			Method = L"device interface";
+			Kind = ADAPTER_KIND_DEVICE_PATH;
+		} else if (OpenAdapterByLuidFromGdiDisplayNames(Luid, &Adapter, Name, ADAPTER_NAME_CCH)) {
+			Method = L"GDI display name";
+			Kind = ADAPTER_KIND_GDI_NAME;
+		} else {
+			LogAppend(&Log, L"no adapter with this LUID, STATUS_INVALID_PARAMETER");
+			LogFailure(&Log);
+			return STATUS_INVALID_PARAMETER;
+		}
+
+		Stored = Name[0] != 0;
+		if (Stored) CacheStore(Luid, Kind, Name);
+
+		LogAppend(&Log, L"hAdapter ");
+		LogAppendHex(&Log, Adapter);
+		LogAppend(&Log, L" via ");
+		LogAppend(&Log, Method);
+		LogAppend(&Log, Stored ? L" (cached)" : L" (not cached: name too long)");
 		LogFlush(&Log);
+	}
+
+	__try {
+		Args->hAdapter = Adapter;
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		CloseKmtAdapter(Adapter);
+		Log.Length = 0;
+		LogAppend(&Log, L"KxGdi: D3DKMTOpenAdapterFromLuid: argument not writable -> STATUS_INVALID_PARAMETER");
+		LogFailure(&Log);
 		return STATUS_INVALID_PARAMETER;
 	}
 
-	Args->hAdapter = Adapter;
-
-	LogAppend(&Log, L"hAdapter ");
-	LogAppendHex(&Log, Adapter);
-	LogAppend(&Log, L" via ");
-	LogAppend(&Log, Method);
-	LogFlush(&Log);
-
 	return STATUS_SUCCESS;
+}
+
+//
+// Prints the loader log of kxgdildr.dll line by line: one OutputDebugString
+// call per line stays well below the 4 KB limit of the debug output buffer.
+//
+
+static void PrintLoaderLog(PCWSTR Text)
+{
+	WCHAR Line[256];
+	UINT Length = 0;
+
+	while (*Text) {
+		WCHAR c = *Text++;
+
+		Line[Length++] = c;
+
+		if (c == L'\n' || Length == sizeof(Line) / sizeof(Line[0]) - 1) {
+			Line[Length] = 0;
+			OutputDebugStringW(Line);
+			Length = 0;
+		}
+	}
+
+	if (Length) {
+		Line[Length] = 0;
+		OutputDebugStringW(Line);
+	}
 }
 
 //
@@ -540,7 +808,7 @@ BOOL WINAPI DllMain(
 		//
 		// When the standalone loader (kxgdildr.dll) brought us in, print its
 		// log now. It ran before kernel32 was usable and could not print
-		// anything itself.
+		// anything itself. (The complete log is also in Windows\Temp.)
 		//
 
 		Loader = GetModuleHandleW(L"kxgdildr.dll");
@@ -548,7 +816,7 @@ BOOL WINAPI DllMain(
 			PFN_KXGDILDRGETLOG GetLog = (PFN_KXGDILDRGETLOG) GetProcAddress(Loader, "KxGdiLdrGetLog");
 			if (GetLog) {
 				PCWSTR Text = GetLog();
-				if (Text && Text[0]) OutputDebugStringW(Text);
+				if (Text) PrintLoaderLog(Text);
 			}
 		}
 	}

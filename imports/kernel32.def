@@ -2,6 +2,7 @@
 ;; Only functions that exist on Windows 7.
 LIBRARY kernel32.dll
 EXPORTS
+    AcquireSRWLockExclusive
     DisableThreadLibraryCalls
     ExitProcess
     FreeLibrary
@@ -9,6 +10,7 @@ EXPORTS
     GetModuleFileNameW
     GetModuleHandleW
     GetProcAddress
+    GetProcessHandleCount
     GetProcessHeap
     GetStdHandle
     HeapAlloc
@@ -16,4 +18,5 @@ EXPORTS
     LoadLibraryExW
     LoadLibraryW
     OutputDebugStringW
+    ReleaseSRWLockExclusive
     WriteFile

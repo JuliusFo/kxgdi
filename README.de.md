@@ -79,8 +79,9 @@ D3DKMTOpenAdapterFromLuid wurde in der DLL GDI32.dll nicht gefunden“).
    Das Skript installiert nur unter Windows 7 (neuere Versionen haben die Funktion von Haus aus).
 
 6. **Mitlesen (optional, aber hilfreich):** Sysinternals **DebugView** starten. Der Lader meldet sich mit
-   `KxGdiLdr:`-Zeilen, jeder Aufruf der Funktion mit einer `KxGdi:`-Zeile. Zusätzlich schreibt der Lader
-   sein Protokoll nach `C:\Windows\Temp\kxgdildr-<Programm>.log` (z. B. `kxgdildr-PathOfExile.tmp.log`),
+   `KxGdiLdr:`-Zeilen, kxgdi mit einer `KxGdi:`-Zeile, wenn die Funktion einen Grafikadapter zum ersten
+   Mal findet (spätere Aufrufe kommen ohne Ausgabe aus dem Zwischenspeicher) oder fehlschlägt. Zusätzlich
+   schreibt der Lader sein Protokoll nach `C:\Windows\Temp\kxgdildr-<Programm>.log` (z. B. `kxgdildr-PathOfExile.tmp.log`),
    auch wenn das Spiel nicht startet. Bitte bei Fehlermeldungen mitschicken.
 
 7. **PoE starten.** Mögliche Ergebnisse:
@@ -126,7 +127,12 @@ demselben Befehl plus `-Uninstall`.
 - **kxgdi.dll:** enthält die nachgerüsteten Funktionen und leitet alles andere an `gdi32.dll` weiter. Die
   Weiterleitungen stammen aus der `gdi32.dll` von Windows 11 (995 Namen). Weiterleitungen auf Namen, die es
   unter Windows 7 nicht gibt, schaden nicht: Sie schlagen nur fehl, wenn ein Programm genau diese Funktion
-  importiert, und das passiert ohne kxgdi genauso.
+  importiert, und das passiert ohne kxgdi genauso. Umgekehrt würde eine Funktion fehlen, die es nur in der
+  `gdi32.dll` von Windows 7 gibt; bekannt ist keine (alte Namen wurden stichprobenartig geprüft). Mit einer
+  `gdi32.dll` von Windows 7 schließt `tools\gen-def.ps1 -Gdi32 <Windows-11-Datei>, <Windows-7-Datei>` diese
+  Lücke. Exporte ohne Namen (nur über ihre Nummer erreichbar, Windows-intern) werden nicht weitergeleitet.
+- **Leistung:** Der erste Aufruf für einen Grafikadapter geht alle Adapter durch; das Ergebnis wird
+  zwischengespeichert, spätere Aufrufe öffnen nur noch diesen einen Adapter.
 
 ## Bauen
 

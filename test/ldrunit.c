@@ -30,8 +30,8 @@ static PCSTR FindGdiImportName(BYTE *Image)
 
 //
 // Synthetic PE32+ image with a bound gdi32 import, a user32 import, a
-// delay-load gdi32 import and a bound import directory. Page aligned, so the
-// rewrite has to deal with real page protection boundaries.
+// delay-load gdi32 import and a bound import directory. Page aligned, so its
+// pages can get their own protections like a mapped image.
 //
 
 __declspec(align(4096)) static BYTE FakeImage[0x3000];
@@ -81,6 +81,24 @@ static void BuildFakeImage(void)
 	CopyStr(0x1FFA, "gdi32.dll");
 }
 
+// Sets the protection of one page of FakeImage and returns the previous one.
+static ULONG SetPageProtect(UINT Page, ULONG Protect)
+{
+	PVOID Base = FakeImage + Page * 0x1000;
+	SIZE_T Size = 0x1000;
+	ULONG Old = 0;
+
+	if (!NT_SUCCESS(NtProtectVirtualMemory(NtCurrentProcess(), &Base, &Size, Protect, &Old))) return 0;
+	return Old;
+}
+
+static ULONG GetPageProtect(UINT Page)
+{
+	ULONG Current = SetPageProtect(Page, PAGE_READONLY);
+	SetPageProtect(Page, Current);
+	return Current;
+}
+
 static void TestFakeImage(void)
 {
 	IMAGE_NT_HEADERS64 *Nt = (IMAGE_NT_HEADERS64 *) (FakeImage + 0x40);
@@ -89,6 +107,15 @@ static void TestFakeImage(void)
 	NTSTATUS Status;
 
 	BuildFakeImage();
+
+	// Like a mapped image: headers and import data read-only, and the page with
+	// the second half of the delay-load name with a different protection, so a
+	// write across the boundary must restore each page's own protection.
+	SetPageProtect(0, PAGE_READONLY);
+	SetPageProtect(1, PAGE_READONLY);
+	SetPageProtect(2, PAGE_EXECUTE_READ);
+	TestCheck(GetPageProtect(0) == PAGE_READONLY && GetPageProtect(1) == PAGE_READONLY &&
+		GetPageProtect(2) == PAGE_EXECUTE_READ, "synthetic image: pages protected like a mapped image");
 
 	Status = KxRewriteGdi32Imports(FakeImage, &Count);
 	TestCheck(NT_SUCCESS(Status) && Count == 2, "synthetic image: normal + delay-load gdi32 renamed");
@@ -99,6 +126,12 @@ static void TestFakeImage(void)
 	TestCheck(Nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT].VirtualAddress == 0 &&
 		Nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BOUND_IMPORT].Size == 0,
 		"synthetic image: bound import directory removed");
+	TestCheck(GetPageProtect(0) == PAGE_READONLY && GetPageProtect(1) == PAGE_READONLY &&
+		GetPageProtect(2) == PAGE_EXECUTE_READ, "synthetic image: original page protections restored");
+
+	SetPageProtect(0, PAGE_READWRITE);
+	SetPageProtect(1, PAGE_READWRITE);
+	SetPageProtect(2, PAGE_READWRITE);
 }
 
 void WINAPI TestMain(void)
