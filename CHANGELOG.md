@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.0.0
 
 - **New: setup window.** Double-click `Setup.cmd`: the window asks for administrator rights, runs the
   tests, finds Path of Exile (Steam libraries, installed programs, default folders, running game), and
