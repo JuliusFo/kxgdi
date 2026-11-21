@@ -23,6 +23,12 @@
     .\Install-KxGdi.ps1 -ExePath "C:\Program Files (x86)\Steam\steamapps\common\Path of Exile\PathOfExileSteam.exe","C:\...\PathOfExile.tmp"
 
 .EXAMPLE
+    # The loader is registered per file name, so a program can also be given
+    # by its name alone (it then applies in every folder, also to VxKex
+    # settings of programs with that name):
+    .\Install-KxGdi.ps1 -ExePath "C:\...\PathOfExileSteam.exe","PathOfExile.tmp"
+
+.EXAMPLE
     # The same in one line, also from cmd.exe
     powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-KxGdi.ps1 -ExePath "C:\...\PathOfExileSteam.exe","C:\...\PathOfExile.tmp"
 
@@ -77,6 +83,10 @@ function Get-NormalizedPath([string] $Path) {
     }
 }
 
+function Test-FileNameOnly([string] $Path) {
+    return ($Path.IndexOfAny([char[]] @('\', '/', ':')) -lt 0)
+}
+
 # Collects the paths from -ExePath and $MorePaths. Besides the array of a
 # direct call (-ExePath "a","b"), this accepts what "powershell -File" makes
 # of it: started from PowerShell, the second path is a separate argument;
@@ -98,7 +108,32 @@ function Get-ProgramPaths {
         foreach ($q in $parts) {
             $q = $q.Trim().Trim('"').Trim()
             if ($q -eq '') { continue }
-            $q = Get-NormalizedPath $q
+            # The registry cmdlets treat * ? [ ] in the file name as wildcards
+            # and ` as escape character, so they would write to the settings
+            # of other programs (m*.exe).
+            $leaf = $q.Substring($q.LastIndexOfAny([char[]] @('\', '/')) + 1)
+            if ($q.IndexOfAny([char[]] @('*', '?')) -ge 0 -or $leaf.IndexOfAny([char[]] @('[', ']', '`')) -ge 0) {
+                Fail "The characters * ? [ ] `` are not allowed in program names: $q"
+            }
+            # A bare file name (e.g. PathOfExile.tmp) stays as it is: the loader
+            # is registered per file name, so it applies in every folder. A
+            # name of a file in the current folder (typed in the game folder)
+            # means that file, as before.
+            if ((Test-FileNameOnly $q) -and -not (Test-Path -LiteralPath $q -PathType Leaf)) {
+                # "." and ".." would address the IFEO key itself or its parent.
+                if ($q.Trim('.').Trim() -eq '') { Fail "Not a program name: '$q'" }
+                if ([IO.Path]::GetExtension($q.TrimEnd('.')) -eq '' -or $q.EndsWith('.')) {
+                    Write-Host "Warning: '$q' has no file extension (like .exe or .tmp); Windows will not match it to a program." -ForegroundColor Yellow
+                }
+            } else {
+                $q = Get-NormalizedPath $q
+                # A folder (e.g. the game folder instead of the .exe) has no
+                # file name; its empty name would address the IFEO key itself.
+                $name = [IO.Path]::GetFileName($q)
+                if ($name.Trim('.').Trim() -eq '' -or (Test-Path -LiteralPath $q -PathType Container)) {
+                    Fail "Not a program, but a folder: '$q'. Please give the program file itself, e.g. ...\PathOfExile.exe"
+                }
+            }
             $dup = $false
             foreach ($r in $result) { if ($r -eq $q) { $dup = $true } }   # -eq ignores case
             if (-not $dup) { $result += $q }
@@ -112,6 +147,11 @@ if ($ExePath.Count -eq 0) { Fail 'No program path given (-ExePath).' }
 
 Write-Host 'Programs:'
 foreach ($exe in $ExePath) { Write-Host "  $exe" }
+$nameOnly = @($ExePath | Where-Object { Test-FileNameOnly $_ })
+if ($nameOnly.Count -gt 0) {
+    if ($Method -eq 'VxKex') { Fail "-Method VxKex needs the full path of every program: $($nameOnly -join ', ')" }
+    Write-Host '(Programs given by file name only are set up in every folder.)'
+}
 if ($ListPrograms) { exit 0 }
 
 #
@@ -133,6 +173,9 @@ if (-not $Uninstall -and -not ($os.Major -eq 6 -and $os.Minor -eq 1) -and -not $
     # loader only switches Application Verifier off again on Windows 7.
     Fail "kxgdi is only needed on Windows 7 (this is Windows $($os.Major).$($os.Minor)). Use -Force to install anyway."
 }
+if (-not $Uninstall -and $os.Major -eq 6 -and $os.Minor -eq 1 -and -not [Environment]::OSVersion.ServicePack -and -not $Force) {
+    Fail 'kxgdi needs Windows 7 with Service Pack 1. Please install SP1 (Windows Update) first.'
+}
 
 #
 # Helpers (shared)
@@ -140,7 +183,8 @@ if (-not $Uninstall -and -not ($os.Major -eq 6 -and $os.Minor -eq 1) -and -not $
 
 function Get-FilterKey([string] $Exe) {
     # VxKex stores per-program settings in an IFEO subkey whose FilterFullPath
-    # value is the full path of the program.
+    # value is the full path of the program. A bare file name matches none.
+    if (Test-FileNameOnly $Exe) { return $null }
     $name = [IO.Path]::GetFileName($Exe)
     $base = Join-Path $IfeoRoot $name
     if (-not (Test-Path $base)) { return $null }
@@ -279,14 +323,14 @@ function Test-LoaderStillUsed {
 function Install-Loader {
     foreach ($f in $LoaderDll, 'kxgdi.dll') {
         $src = Join-Path $ScriptDir $f
-        if (-not (Test-Path $src)) { Fail "$f not found next to the script: $src" }
+        if (-not (Test-Path -LiteralPath $src)) { Fail "$f not found next to the script: $src" }
     }
 
     # Files first, registry second: a registered but missing provider would
     # stop the program from starting.
     foreach ($f in $LoaderDll, 'kxgdi.dll') {
         try {
-            Copy-Item (Join-Path $ScriptDir $f) (Join-Path $System32 $f) -Force
+            Copy-Item -LiteralPath (Join-Path $ScriptDir $f) (Join-Path $System32 $f) -Force
         } catch {
             Fail "Could not copy $f to $System32 (is the game still running?): $_"
         }
@@ -296,6 +340,24 @@ function Install-Loader {
     foreach ($exe in $ExePath) {
         Write-Host ''
         Write-Host "Program: $exe"
+
+        if (Test-FileNameOnly $exe) {
+            # By file name: the base key, plus every VxKex filter subkey of
+            # that name. When a filter subkey matches the program's path,
+            # Windows reads only that subkey and ignores the base key.
+            $key = Join-Path $IfeoRoot $exe
+            if (-not (Test-Path $key)) { New-Item $key -Force | Out-Null }
+            $value = Add-LoaderEntry $key
+            Write-Host "  VerifierDlls = $value" -ForegroundColor Green
+
+            foreach ($sub in @(Get-ChildItem $key -ErrorAction SilentlyContinue)) {
+                $props = Get-ItemProperty $sub.PSPath -ErrorAction SilentlyContinue
+                if (-not ($props -and $props.FilterFullPath)) { continue }
+                $value = Add-LoaderEntry $sub.PSPath
+                Write-Host "  VxKex settings for $($props.FilterFullPath): VerifierDlls = $value" -ForegroundColor Green
+            }
+            continue
+        }
 
         $filter = Get-FilterKey $exe
         if ($filter) {
@@ -309,7 +371,8 @@ function Install-Loader {
             if ($other.Count -gt 0) {
                 Write-Host '  Warning: VxKex settings exist for this file name, but for a different path:' -ForegroundColor Yellow
                 foreach ($p in $other) { Write-Host "    $p" -ForegroundColor Yellow }
-                Write-Host '  If that is the same program, run the script again with exactly that path.' -ForegroundColor Yellow
+                Write-Host '  If that is the same program, run the script again with exactly that path,' -ForegroundColor Yellow
+                Write-Host "  or with the file name only ($([IO.Path]::GetFileName($exe)))." -ForegroundColor Yellow
             }
         }
 
@@ -409,10 +472,10 @@ function Install-VxKex {
     Write-Host "VxKex directory: $KexDir"
     Write-Host 'Note: this method needs VxKex 1.2.0 or later from i486/VxKex. VxKex NEXT ignores it, use -Method Loader there.'
 
-    if (-not (Test-Path $DllSrc)) { Fail "kxgdi.dll not found next to the script: $DllSrc" }
+    if (-not (Test-Path -LiteralPath $DllSrc)) { Fail "kxgdi.dll not found next to the script: $DllSrc" }
     if (-not (Test-Path $Kex64)) { Fail "Directory not found: $Kex64 (is this a 64-bit Windows with 64-bit VxKex?)" }
 
-    Copy-Item $DllSrc $DllDest -Force
+    Copy-Item -LiteralPath $DllSrc $DllDest -Force
     Write-Host "Copied: $DllDest"
 
     foreach ($exe in $ExePath) {

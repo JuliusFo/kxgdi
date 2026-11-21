@@ -49,7 +49,7 @@ function Get-Sha256([string] $Path) {
 }
 
 foreach ($f in (@('kxgdildr.dll', 'kxgdi.dll') + $TestFiles)) {
-    if (-not (Test-Path (Join-Path $Dir $f))) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Dir $f))) {
         Write-Host "ERROR: $f not found in $Dir" -ForegroundColor Red
         exit 1
     }
@@ -73,12 +73,12 @@ try {
             $setAside += $dest
         }
 
-        Copy-Item $src $dest
+        Copy-Item -LiteralPath $src $dest
         $copied += $dest
     }
 
     New-Item -ItemType Directory $RunDir | Out-Null
-    foreach ($f in $TestFiles) { Copy-Item (Join-Path $Dir $f) $RunDir }
+    foreach ($f in $TestFiles) { Copy-Item -LiteralPath (Join-Path $Dir $f) $RunDir }
 
     if (Test-Path $LogFile) { Remove-Item $LogFile -Force }
 

@@ -30,7 +30,10 @@ point D3DKMTOpenAdapterFromLuid could not be located in the dynamic link library
   Verifier only happen on Windows 7 and can only be checked there.
 - ✅ All DLLs only import functions that exist on Windows 7 and are marked as Windows 6.01.
   `kxgdildr.dll` only imports `ntdll.dll`.
-- ⚠️ **Not yet confirmed on Windows 7.** Please run the two tests below first and report the result.
+- ✅ **First report from Windows 7:** a user confirms that Path of Exile starts with v0.2.1 and DXVK 1.10.3
+  ([issue #1](https://github.com/JuliusFo/kxgdi/issues/1)). More reports are welcome.
+- ⚠️ The setup window (`Setup.cmd`) is new and not yet tested on Windows 7. If it does not work for you,
+  use the command line and please open an issue.
 - x64 only (Path of Exile is 64-bit).
 
 ## Before you start
@@ -44,9 +47,29 @@ point D3DKMTOpenAdapterFromLuid could not be located in the dynamic link library
 
 **Requirements:** Windows 7 SP1 x64. VxKex is **not** required.
 
-1. **Extract the release zip**, e.g. to `C:\kxgdi`.
+**Extract the release zip**, e.g. to `C:\kxgdi`. Then use either the setup window (easier) or the
+command line.
 
-2. **Self-test of kxgdi:** open a command prompt and run:
+### With the setup window
+
+![The kxgdi setup window](docs/setup.png)
+
+1. **Double-click `Setup.cmd`** and confirm the administrator prompt. The setup window opens.
+2. **Step 1, "Run tests":** checks kxgdi and the loader on this PC; nothing stays installed. At the end
+   it must say `Both tests passed`. If a test fails, click "Copy output", post it in an issue and
+   **do not continue**.
+3. **Step 2, "Programs":** the window looks for Path of Exile itself (Steam, standalone client, running
+   game) and adds `PathOfExile.tmp` by name. If the game is not found, click "Add file..." and select
+   `PathOfExile.exe` or `PathOfExileSteam.exe`. Remove entries you do not use.
+4. **Step 3, "Install".** Then start the game, see [After installing](#after-installing).
+
+"Uninstall" in step 3 removes kxgdi again for the programs in the list. "Find game" also lists the
+programs kxgdi is installed for, so this works even after the game itself was removed. If something goes wrong, click
+"Show loader logs", then "Copy output", and paste it into an issue.
+
+### With the command line
+
+1. **Self-test of kxgdi:** open a command prompt and run:
    ```
    cd /d C:\kxgdi
    kxgdi-test.exe
@@ -54,7 +77,7 @@ point D3DKMTOpenAdapterFromLuid could not be located in the dynamic link library
    Expected: many `[ OK ]` lines and `RESULT: all checks passed` at the end. The line
    `No native D3DKMTOpenAdapterFromLuid (Windows 7)` is expected.
 
-3. **Loader test:** open PowerShell **as administrator** (64-bit, not "x86") and run:
+2. **Loader test:** open PowerShell **as administrator** (64-bit, not "x86") and run:
    ```
    cd C:\kxgdi
    powershell -NoProfile -ExecutionPolicy Bypass -File .\Test-Loader.ps1
@@ -64,45 +87,45 @@ point D3DKMTOpenAdapterFromLuid could not be located in the dynamic link library
    If either test shows `[FAIL]` or the test program cannot start, please open an issue with the output
    and **do not continue**.
 
-4. **Find the path of the `.tmp` file.** The error message mentions `PathOfExile.tmp`. While the error
-   dialog is open: Task Manager → "Processes" tab → right-click `PathOfExile.tmp` → "Open file location".
-
-5. **Install** (PowerShell as administrator; adjust the paths and list both programs, separated by a
+3. **Install** (PowerShell as administrator; adjust the path of the game, separate the programs with a
    comma):
    ```
    cd C:\kxgdi
    Set-ExecutionPolicy -Scope Process Bypass -Force
-   .\Install-KxGdi.ps1 -ExePath "C:\Program Files (x86)\Steam\steamapps\common\Path of Exile\PathOfExileSteam.exe","<path to PathOfExile.tmp>"
+   .\Install-KxGdi.ps1 -ExePath "C:\Program Files (x86)\Steam\steamapps\common\Path of Exile\PathOfExileSteam.exe","PathOfExile.tmp"
    ```
    The second line allows scripts in this PowerShell window only. The script first prints the programs
-   it will set up under `Programs:`; both paths should be listed there.
+   it will set up under `Programs:`. `PathOfExile.tmp` (the name from the error message) needs no folder:
+   the loader is registered per file name, so it applies wherever the game starts it.
    > With **kxgdi v0.2.0**, the one-line `powershell -File …` command from its instructions does not work
    > with two paths ([issue #1](https://github.com/JuliusFo/kxgdi/issues/1)). Use the commands above.
 
    The script copies `kxgdildr.dll` and `kxgdi.dll` to `C:\Windows\System32` and registers the loader
-   for these two programs only. If VxKex (or VxKex NEXT) is enabled for a program, the loader is added
+   for these programs only. If VxKex (or VxKex NEXT) is enabled for a program, the loader is added
    after it. If you enable or disable VxKex for the game later, run the script again. The script only
    installs on Windows 7 (newer Windows versions have the function natively).
 
-6. **Watch the log (optional but helpful):** start Sysinternals **DebugView**. You will see `KxGdiLdr:`
+**Uninstall** (PowerShell as administrator, first two lines as in step 3):
+```
+.\Install-KxGdi.ps1 -ExePath "<same programs as above>" -Uninstall
+```
+This removes the loader registration and, if no other program uses it, the two DLLs from System32.
+Close the game first.
+
+### After installing
+
+1. **Watch the log (optional but helpful):** start Sysinternals **DebugView**. You will see `KxGdiLdr:`
    lines from the loader and a `KxGdi:` line when the function finds an adapter for the first time
    (later calls are answered from a cache without output) or fails. The loader also writes its
    log to `C:\Windows\Temp\kxgdildr-<program>.log` (e.g. `kxgdildr-PathOfExile.tmp.log`), even if the
-   game does not start. Please attach it to bug reports.
+   game does not start ("Show loader logs" in the setup window). Please attach it to bug reports.
 
-7. **Start the game.** Possible outcomes:
+2. **Start the game.** Possible outcomes:
    - It starts → next step is DXVK for effects.
    - A new "entry point … not found" message → please open an issue with a screenshot. That is the next
      missing function.
    - A crash → please attach the Event Viewer entry (Windows Logs → Application, "Application Error")
-     and the DebugView output.
-
-**Uninstall** (PowerShell as administrator, first two lines as in step 5):
-```
-.\Install-KxGdi.ps1 -ExePath "<same paths as above>" -Uninstall
-```
-This removes the loader registration and, if no other program uses it, the two DLLs from System32.
-Close the game first.
+     and the loader log.
 
 ### Alternative: via VxKex (i486/VxKex 1.2.0 or later)
 
@@ -111,9 +134,11 @@ Instead of the loader, kxgdi can be plugged into [i486/VxKex](https://github.com
 ```
 .\Install-KxGdi.ps1 -Method VxKex -ExePath "<paths>"
 ```
-(PowerShell as administrator, first two lines as in step 5.)
+(PowerShell as administrator, first two lines as in step 3 of the command line.)
 This copies `kxgdi.dll` to `<VxKex>\Kex64` and enables VxKex for the programs. Uninstall with the same
-command plus `-Uninstall`.
+command plus `-Uninstall`. This method needs the full path of every program, including
+`PathOfExile.tmp`: while the game's error message is open, Task Manager → "Processes" tab → right-click
+`PathOfExile.tmp` → "Open file location".
 
 ## How it works
 
@@ -154,8 +179,9 @@ pwsh .\tools\gen-def.ps1 -Gdi32 C:\Windows\System32\gdi32.dll, D:\win7\gdi32.dll
 pwsh .\tools\package.ps1            # dist\kxgdi-win7-x64.zip
 ```
 
-`build.ps1 -Test` runs `kxgdi-test.exe`, `kxgdildr-unit.exe` and `test\Test-InstallerArgs.ps1` (how the
-installer reads its paths when started from PowerShell or cmd.exe); as administrator it also runs the
+`build.ps1 -Test` runs `kxgdi-test.exe`, `kxgdildr-unit.exe`, `test\Test-InstallerArgs.ps1` (how the
+installer reads its paths when started from PowerShell or cmd.exe) and `install\Setup-KxGdi.ps1 -SelfTest`
+(game search, hand-over to the installer, building the window); as administrator it also runs the
 end-to-end `test\Test-Loader.ps1`. On build servers without a display adapter the kxgdi test runs with
 `/ci` and skips the adapter checks.
 
@@ -180,6 +206,7 @@ Adding functions: implement them as `Ext_<Name>` in `src\kxgdi.c`, add them to `
 | `test\ldrtest.c`, `test\ldrtest-dll.c`, `test\Test-Loader.ps1` | End-to-end loader test (administrator) |
 | `test\Test-InstallerArgs.ps1` | Test of the installer's command line (changes nothing) |
 | `install\Install-KxGdi.ps1` | Installer (PowerShell 2.0) |
+| `install\Setup.cmd`, `install\Setup-KxGdi.ps1` | Setup window (WinForms, PowerShell 2.0); `-Snapshot <png>` renders it for `docs\setup.png` |
 | `tools\gen-def.ps1`, `tools\package.ps1` | Generator and packaging |
 | `.github\workflows\build.yml` | CI build and releases |
 

@@ -23,6 +23,8 @@ $files = @(
     'out\x64\kxgdi-ldrtest.exe',
     'out\x64\kxgdi-ldrtest-static.dll',
     'out\x64\kxgdi-ldrtest-dynamic.dll',
+    'install\Setup.cmd',
+    'install\Setup-KxGdi.ps1',
     'install\Install-KxGdi.ps1',
     'test\Test-Loader.ps1',
     'README.md',
@@ -31,6 +33,10 @@ $files = @(
     'LICENSE'
 )
 foreach ($f in $files) { Copy-Item (Join-Path $root $f) $stage }
+
+# Screenshot used by the READMEs (docs/setup.png)
+New-Item -ItemType Directory -Force (Join-Path $stage 'docs') | Out-Null
+Copy-Item (Join-Path $root 'docs\setup.png') (Join-Path $stage 'docs')
 
 $zip = Join-Path $root 'dist\kxgdi-win7-x64.zip'
 if (Test-Path $zip) { Remove-Item $zip -Force }

@@ -112,6 +112,79 @@ try {
     $out = @(& powershell.exe $ps -ExePath "$a","$($a.ToUpper())" -ListPrograms 2>&1 | ForEach-Object { "$_" })
     Check 'duplicate path' $out $LASTEXITCODE @($a)
 
+    # A bare file name stays a file name (the loader is registered per name)
+    $out = @(& powershell.exe $ps -ExePath "$a","PathOfExile.tmp" -ListPrograms 2>&1 | ForEach-Object { "$_" })
+    Check 'bare file name, from PowerShell' $out $LASTEXITCODE @($a, 'PathOfExile.tmp')
+
+    $r = Invoke-Cmd "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$Installer`" -ExePath `"$a`",PathOfExile.tmp -ListPrograms"
+    Check 'bare file name, from cmd.exe' $r.Out $r.Code @($a, 'PathOfExile.tmp')
+
+    # ... but -Method VxKex needs full paths
+    $out = @(& powershell.exe $ps -Method VxKex -ExePath "PathOfExile.tmp" -ListPrograms 2>&1 | ForEach-Object { "$_" })
+    if ($LASTEXITCODE -eq 1 -and (($out -join "`n") -match 'needs the full path')) {
+        Write-Host '[ OK ] -Method VxKex rejects a bare file name'
+    } else {
+        Write-Host "[FAIL] -Method VxKex rejects a bare file name (exit code $LASTEXITCODE)" -ForegroundColor Red
+        foreach ($line in $out) { Write-Host "       > $line" }
+        $failed++
+    }
+
+    # Wildcards would make the registry cmdlets write to other programs' settings
+    foreach ($w in 'm*.exe', 'Path?fExile.exe', 'PathOfExile[1].tmp', 'C:\Games\*\PathOfExile.exe', 'a`b.exe') {
+        $out = @(& powershell.exe $ps -ExePath "$w" -ListPrograms 2>&1 | ForEach-Object { "$_" })
+        if ($LASTEXITCODE -eq 1 -and (($out -join "`n") -match 'are not allowed in program names')) {
+            Write-Host "[ OK ] wildcard name is rejected: $w"
+        } else {
+            Write-Host "[FAIL] wildcard name is rejected: $w (exit code $LASTEXITCODE)" -ForegroundColor Red
+            foreach ($line in $out) { Write-Host "       > $line" }
+            $failed++
+        }
+    }
+    # "." and ".." would address the IFEO key itself or its parent
+    foreach ($w in '.', '..', '...') {
+        $out = @(& powershell.exe $ps -ExePath "$w" -ListPrograms 2>&1 | ForEach-Object { "$_" })
+        if ($LASTEXITCODE -eq 1 -and (($out -join "`n") -match 'Not a program name')) {
+            Write-Host "[ OK ] '$w' is rejected"
+        } else {
+            Write-Host "[FAIL] '$w' is rejected (exit code $LASTEXITCODE)" -ForegroundColor Red
+            foreach ($line in $out) { Write-Host "       > $line" }
+            $failed++
+        }
+    }
+
+    # The installer itself in a folder with brackets (zip extracted to "kxgdi [1]")
+    $bracketDir = Join-Path $tmp 'kxgdi [1]'
+    New-Item -ItemType Directory $bracketDir | Out-Null
+    Copy-Item -LiteralPath $Installer (Join-Path $bracketDir 'Install-KxGdi.ps1')
+    $out = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $bracketDir 'Install-KxGdi.ps1') -ExePath "$a" -ListPrograms 2>&1 | ForEach-Object { "$_" })
+    Check 'installer runs from a folder with brackets' $out $LASTEXITCODE @($a)
+
+    # A folder instead of the program would address the IFEO key itself
+    foreach ($w in @($tmp, ($tmp + '\'), 'C:\')) {
+        $out = @(& powershell.exe $ps -ExePath "$w" -ListPrograms 2>&1 | ForEach-Object { "$_" })
+        if ($LASTEXITCODE -eq 1 -and (($out -join "`n") -match 'but a folder')) {
+            Write-Host "[ OK ] folder is rejected: $w"
+        } else {
+            Write-Host "[FAIL] folder is rejected: $w (exit code $LASTEXITCODE)" -ForegroundColor Red
+            foreach ($line in $out) { Write-Host "       > $line" }
+            $failed++
+        }
+    }
+
+    # A file name of a file in the current folder means that file
+    $gameDir = Join-Path $tmp 'Game Folder'
+    New-Item -ItemType Directory $gameDir | Out-Null
+    Set-Content -LiteralPath (Join-Path $gameDir 'PathOfExile.exe') -Value ''
+    Push-Location -LiteralPath $gameDir
+    try {
+        $out = @(& powershell.exe $ps -ExePath 'PathOfExile.exe','PathOfExile.tmp' -ListPrograms 2>&1 | ForEach-Object { "$_" })
+    } finally { Pop-Location }
+    Check 'file name of an existing file in the current folder becomes its path' $out $LASTEXITCODE @((Join-Path $gameDir 'PathOfExile.exe'), 'PathOfExile.tmp')
+
+    $br = 'C:\Games [test]\PathOfExile.exe'
+    $out = @(& powershell.exe $ps -ExePath "$br" -ListPrograms 2>&1 | ForEach-Object { "$_" })
+    Check 'brackets in a folder name are allowed' $out $LASTEXITCODE @($br)
+
     # A mistyped parameter must not end up as a program path
     $out = @(& powershell.exe $ps -ExePath "$a" -Methode VxKex -ListPrograms 2>&1 | ForEach-Object { "$_" })
     if ($LASTEXITCODE -eq 1 -and (($out -join "`n") -match "Unknown parameter '-Methode'")) {

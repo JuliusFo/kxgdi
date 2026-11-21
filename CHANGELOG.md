@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+- **New: setup window.** Double-click `Setup.cmd`: the window asks for administrator rights, runs the
+  tests, finds Path of Exile (Steam libraries, installed programs, default folders, running game), and
+  installs or uninstalls with one click. It shows the output of the scripts and can copy it for bug
+  reports, including the loader logs. It uses `Install-KxGdi.ps1` underneath; the command line stays
+  available.
+- `Install-KxGdi.ps1` accepts programs given by file name only, e.g. `PathOfExile.tmp`: the loader is
+  registered per file name anyway, so finding the folder of the `.tmp` file is no longer necessary.
+  If VxKex is enabled for a program of that name, the loader is added to those VxKex settings too.
+  `-Method VxKex` still needs full paths.
+- `Install-KxGdi.ps1` checks program names more strictly: it rejects wildcard characters (`*`, `?`, `[`, `]` and the backtick),
+  folders instead of programs, and `.`/`..`. Before, `m*.exe` would have written the loader settings
+  for every program matching it, and a folder path into the main IFEO key. It warns about names
+  without an extension, and now refuses to install on Windows 7 without Service Pack 1.
+- The setup window's "Find game" also lists the programs kxgdi is already installed for, so
+  "Uninstall" works after the game was removed.
+- Known limitation of the setup window: it shows the output of a running step line by line, but the
+  window does not respond while a step is busy (a few seconds for the tests).
+- The instructions start with the setup window; the command line install no longer needs the path of
+  the `.tmp` file.
+- First confirmation from Windows 7: Path of Exile starts with v0.2.1 and DXVK 1.10.3 (#1).
+
 ## v0.2.1
 
 - **Fixed: the install command from the v0.2.0 instructions did not work with two paths**
